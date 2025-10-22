@@ -1,0 +1,49 @@
+[package]
+name = "sshc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Config & Serialization
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.9.7"
+
+# Web Framework & Async
+axum = "0.8.6"
+tokio = { version = "1", features = ["full"] }
+
+# File Embedding
+rust-embed = { version = "8.0", features = ["include-exclude"] }
+
+# Crypto
+fernet = "0.2.1"
+base64 = "0.22.1"
+
+# Utilities
+anyhow = "1.0"
+thiserror = "2.0.17"
+dirs = "6.0.0"
+tempfile = "3.8"
+which = "8.0.0"
+portpicker = "0.1"
+webbrowser = "1.0.5"
+log = "0.4"
+env_logger = "0.11.8"
+shellexpand = "3.1"
+url = "2.5"
+hostname = "0.4.1"
+
+# Platform specific
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30.1", features = ["process"] }
+
+
+[profile.release]
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true

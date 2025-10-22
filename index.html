@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSH 连接管理器</title>
+    <style>
+        :root {
+            --font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", system-ui, -apple-system, sans-serif;
+            --font-monospace: "Cascadia Mono", "Consolas", "Courier New", monospace;
+            --control-corner-radius: 4px;
+            --layer-corner-radius: 6px;
+        }
+
+        @media (prefers-color-scheme: light) {
+            :root {
+                --fill-color-layer-1: #f3f3f3;
+                --fill-color-layer-2: #e8e8e8;
+                --fill-color-layer-3: #ffffff;
+                --fill-color-control: #ffffff;
+                --fill-color-control-hover: #f9f9f9;
+                --fill-color-control-disabled: #f3f3f3;
+                --fill-color-accent: #0078d4;
+                --fill-color-accent-hover: #106ebe;
+                --fill-color-list-selected: #0078d4;
+                --fill-color-list-hover: rgba(0, 0, 0, 0.03);
+                --stroke-color-default: #d1d1d1;
+                --stroke-color-control: #bababa;
+                --stroke-color-focus: #005a9e;
+                --text-primary: #0d0d0d;
+                --text-secondary: #5c5c5c;
+                --text-on-accent: #ffffff;
+                --text-disabled: #8a8a8a;
+                --text-danger: #d13438;
+            }
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --fill-color-layer-1: #202020;
+                --fill-color-layer-2: #2b2b2b;
+                --fill-color-layer-3: #1e1e1e;
+                --fill-color-control: #2d2d2d;
+                --fill-color-control-hover: #383838;
+                --fill-color-control-disabled: #252525;
+                --fill-color-accent: #0095ff;
+                --fill-color-accent-hover: #3aaeff;
+                --fill-color-list-selected: #004a7c;
+                --fill-color-list-hover: rgba(255, 255, 255, 0.04);
+                --stroke-color-default: #383838;
+                --stroke-color-control: #555555;
+                --stroke-color-focus: #0095ff;
+                --text-primary: #f2f2f2;
+                --text-secondary: #a1a1a1;
+                --text-on-accent: #ffffff;
+                --text-disabled: #707070;
+                --text-danger: #f17074;
+            }
+        }
+
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-family);
+            margin: 0;
+            background-color: var(--fill-color-layer-1);
+            color: var(--text-primary);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+            font-size: 14px;
+            font-weight: 400;
+        }
+
+        .transition-colors {
+            transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1), border-color 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        .sidebar {
+            width: 300px;
+            min-width: 260px;
+            background-color: var(--fill-color-layer-2);
+            border-right: 1px solid var(--stroke-color-default);
+            display: flex;
+            flex-direction: column;
+            padding: 8px;
+            gap: 8px;
+        }
+
+        .main-content {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 12px 16px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 6px 10px;
+            border-radius: var(--control-corner-radius);
+            border: 1px solid var(--stroke-color-control);
+            background-color: var(--fill-color-control);
+            color: var(--text-primary);
+        }
+
+        .server-list-container {
+            border: 1px solid var(--stroke-color-default);
+            border-radius: var(--control-corner-radius);
+            overflow-y: auto;
+            flex-grow: 1;
+            background-color: var(--fill-color-layer-3);
+        }
+
+        .server-list {
+            list-style: none;
+            padding: 4px;
+            margin: 0;
+        }
+
+        .server-list-item {
+            padding: 6px 10px;
+            border-radius: var(--control-corner-radius);
+            cursor: default;
+            user-select: none;
+        }
+
+        .server-list-item:hover {
+            background-color: var(--fill-color-list-hover);
+        }
+
+        .server-list-item.active {
+            background-color: var(--fill-color-list-selected);
+            color: var(--text-on-accent);
+        }
+
+        .server-list-item .server-name {
+            font-weight: 600;
+            display: block;
+        }
+
+        .server-list-item .server-info {
+            font-size: 12px;
+            color: var(--text-secondary);
+            opacity: 0.9;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .server-list-item .server-info-sub {
+             font-size: 12px;
+             color: var(--text-secondary);
+             opacity: 0.9;
+             white-space: nowrap;
+             overflow: hidden;
+             text-overflow: ellipsis;
+             display: block;
+        }
+
+        .server-list-item.active .server-info,
+        .server-list-item.active .server-info-sub {
+            color: var(--text-on-accent);
+            opacity: 0.8;
+        }
+
+        .content-header {
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid var(--stroke-color-default);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            min-height: 32px;
+        }
+
+        .content-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .content-actions .button {
+            margin-left: 8px;
+        }
+
+        .content-card {
+            background-color: var(--fill-color-layer-3);
+            border: 1px solid var(--stroke-color-default);
+            border-radius: var(--layer-corner-radius);
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        .placeholder {
+            display: flex;
+            height: 100%;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            text-align: center;
+        }
+
+        fieldset {
+            border: none;
+            padding: 0;
+            margin: 0 0 24px 0;
+        }
+
+        legend {
+            font-size: 15px;
+            font-weight: 600;
+            padding: 0;
+            margin-bottom: 16px;
+            width: 100%;
+            border-bottom: 1px solid var(--stroke-color-default);
+            padding-bottom: 8px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 12px 16px;
+            align-items: center;
+        }
+
+        .form-grid label {
+            font-weight: 600;
+            text-align: right;
+        }
+
+        .form-grid .full-width {
+            grid-column: 2 / 3;
+        }
+
+        input[type="text"], input[type="password"], input[type="number"] {
+            width: 100%;
+            padding: 6px 10px;
+            border-radius: var(--control-corner-radius);
+            border: 1px solid var(--stroke-color-control);
+            background-color: var(--fill-color-control);
+            color: var(--text-primary);
+        }
+
+        input:focus-visible {
+            outline: none;
+            border-color: var(--stroke-color-focus);
+            box-shadow: 0 0 0 1px var(--stroke-color-focus) inset;
+        }
+
+        .form-view[data-mode="view"] input {
+            background-color: var(--fill-color-control-disabled);
+            color: var(--text-disabled);
+            border-color: transparent;
+            padding-left: 10px;
+            cursor: default;
+        }
+
+        .form-view[data-mode="view"] .checkbox-group {
+            color: var(--text-disabled);
+        }
+
+        .form-view[data-mode="view"] input:checked + label::before {
+            border-color: var(--text-disabled);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .checkbox-group label {
+            font-weight: 400;
+            text-align: left;
+        }
+
+        .button {
+            padding: 6px 16px;
+            border: 1px solid var(--stroke-color-control);
+            border-radius: var(--control-corner-radius);
+            background-color: var(--fill-color-control);
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .button:hover {
+            background-color: var(--fill-color-control-hover);
+        }
+
+        .button.primary {
+            background-color: var(--fill-color-accent);
+            border-color: var(--fill-color-accent);
+            color: var(--text-on-accent);
+        }
+
+        .button.primary:hover {
+            background-color: var(--fill-color-accent-hover);
+            border-color: var(--fill-color-accent-hover);
+        }
+
+        .button.danger {
+            color: var(--text-danger);
+        }
+
+        .button.danger:hover {
+            background-color: var(--text-danger);
+            color: white;
+            border-color: var(--text-danger);
+        }
+
+        .context-menu {
+            position: absolute;
+            z-index: 1000;
+            display: none;
+            list-style: none;
+            padding: 6px;
+            margin: 0;
+            background-color: var(--fill-color-layer-3);
+            border: 1px solid var(--stroke-color-default);
+            border-radius: var(--layer-corner-radius);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            min-width: 160px;
+        }
+
+        .context-menu-item {
+            padding: 6px 12px;
+            cursor: default;
+            border-radius: var(--control-corner-radius);
+            user-select: none;
+        }
+
+        .context-menu-item:hover {
+            background-color: var(--fill-color-list-hover);
+        }
+
+        .context-menu-item.danger:hover {
+             background-color: var(--text-danger);
+             color: white;
+        }
+
+        /* --- Port Forwarding --- */
+        .pf-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .pf-item {
+            border: 1px solid var(--stroke-color-default);
+            border-radius: var(--control-corner-radius);
+        }
+
+        .pf-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            background-color: var(--fill-color-layer-2);
+            border-bottom: 1px solid var(--stroke-color-default);
+        }
+
+        .pf-type-selector {
+            display: flex;
+            background-color: var(--fill-color-control);
+            border: 1px solid var(--stroke-color-control);
+            border-radius: var(--control-corner-radius);
+            overflow: hidden;
+        }
+
+        .pf-type-selector button {
+            background-color: transparent;
+            border: none;
+            padding: 4px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            border-left: 1px solid var(--stroke-color-control);
+            color: var(--text-secondary);
+        }
+
+        .pf-type-selector button:first-child {
+            border-left: none;
+        }
+
+        .pf-type-selector button.active {
+            background-color: var(--fill-color-accent);
+            color: var(--text-on-accent);
+        }
+
+        .pf-item-body {
+            padding: 12px;
+        }
+
+        .pf-config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 8px 12px;
+            align-items: center;
+        }
+
+        .pf-config-grid label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .pf-config-grid input {
+            padding: 4px 8px;
+            font-size: 13px;
+        }
+
+        .pf-explanation {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px dashed var(--stroke-color-default);
+        }
+
+        .form-view[data-mode="view"] .pf-item {
+            border-color: transparent;
+        }
+
+        .form-view[data-mode="view"] .pf-item-header {
+            background-color: transparent;
+            padding-left: 0;
+        }
+
+        .form-view[data-mode="view"] .pf-item-body {
+            display: none;
+        }
+
+        .pf-view-summary {
+            font-family: var(--font-monospace);
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="sidebar">
+        <input type="text" id="search-input" class="search-input transition-colors" placeholder="筛选服务器...">
+        <div class="server-list-container">
+            <ul id="server-list" class="server-list"></ul>
+        </div>
+        <button id="add-new-btn" class="button primary transition-colors" style="width: 100%;">新建连接</button>
+    </div>
+    <div class="main-content">
+        <div class="content-header">
+            <div id="content-title" class="content-title"></div>
+            <div id="content-actions" class="content-actions"></div>
+        </div>
+        <div id="content-card" class="content-card">
+            <!-- Views rendered here by JS -->
+        </div>
+    </div>
+</div>
+
+<ul id="context-menu" class="context-menu">
+    <li class="context-menu-item" data-action="copy">复制连接命令</li>
+    <li class="context-menu-item danger" data-action="delete">删除</li>
+</ul>
+
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const serverListEl = document.getElementById('server-list');
+        const searchInput = document.getElementById('search-input');
+        const addNewBtn = document.getElementById('add-new-btn');
+        const contentCardEl = document.getElementById('content-card');
+        const contentTitleEl = document.getElementById('content-title');
+        const contentActionsEl = document.getElementById('content-actions');
+        const contextMenuEl = document.getElementById('context-menu');
+
+        let servers = {};
+        let currentServerName = null;
+        let currentMode = 'placeholder'; // 'placeholder', 'view', 'edit'
+
+        async function api(url, options = {}) {
+            try {
+                const response = await fetch(url, options);
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({error: '未知错误'}));
+                    throw new Error(err.error || `HTTP ${response.status}`);
+                }
+                return options.method === 'DELETE' ? null : response.json();
+            } catch (error) {
+                alert(`操作失败: ${error.message}`);
+                throw error;
+            }
+        }
+
+        async function deleteServer(name) {
+             if (confirm(`确实要删除连接 "${name}" 吗？此操作无法恢复。`)) {
+                try {
+                    await api(`/api/server/${name}`, {method: 'DELETE'});
+                    if (currentServerName === name) {
+                       currentServerName = null;
+                       currentMode = 'placeholder';
+                    }
+                    await loadAndRender();
+                } catch (error) { /* handled by api */ }
+            }
+        }
+
+        async function loadAndRender() {
+            try {
+                servers = await api('/api/servers');
+                renderServerList();
+                renderMainContent();
+            } catch (error) {
+                console.error(`加载失败: ${error.message}`);
+            }
+        }
+
+        function renderServerList() {
+            serverListEl.innerHTML = '';
+            const filter = searchInput.value.toLowerCase();
+            const sortedNames = Object.keys(servers).sort((a, b) => {
+                const nameA = servers[a].display_name || a;
+                const nameB = servers[b].display_name || b;
+                return nameA.localeCompare(nameB, 'zh-CN');
+            });
+
+            for (const name of sortedNames) {
+                 const server = servers[name];
+                 const displayName = server.display_name || name;
+                if (!name.toLowerCase().includes(filter) && !displayName.toLowerCase().includes(filter)) continue;
+
+                const li = document.createElement('li');
+                li.className = `server-list-item transition-colors ${name === currentServerName ? 'active' : ''}`;
+                li.dataset.name = name;
+                // MODIFIED: Display name and config name format
+                li.innerHTML = `<span class="server-name">${displayName}</span>
+                                <span class="server-info">(${name})</span>
+                                <span class="server-info-sub">${server.user || ''}@${server.host || ''}</span>`;
+                serverListEl.appendChild(li);
+            }
+        }
+
+        function renderMainContent() {
+            let title = '', actionsHTML = '', contentHTML = '';
+            const isNew = currentMode === 'edit' && !servers[currentServerName];
+
+            if (currentMode === 'edit') {
+                title = isNew ? '新建连接' : `编辑: ${currentServerName}`;
+                actionsHTML = `<button id="save-btn" class="button primary transition-colors">保存</button><button id="cancel-btn" class="button transition-colors">取消</button>${!isNew ? '<button id="delete-btn" class="button danger transition-colors">删除</button>' : ''}`;
+            } else if (currentMode === 'view') {
+                title = `查看: ${currentServerName}`;
+                actionsHTML = `<button id="edit-btn" class="button primary transition-colors">编辑</button><button id="delete-btn" class="button danger transition-colors">删除</button>`;
+            } else {
+                title = 'SSH 连接管理器';
+            }
+
+            if (currentMode === 'view' || currentMode === 'edit') {
+                contentHTML = createFormHTML(currentServerName, servers[currentServerName] || {}, currentMode);
+            } else {
+                contentHTML = `<div class="placeholder">请从左侧选择一个连接，或新建连接。</div>`;
+            }
+
+            contentTitleEl.textContent = title;
+            contentActionsEl.innerHTML = actionsHTML;
+            contentCardEl.innerHTML = contentHTML;
+        }
+
+        function createFormHTML(name, server, mode) {
+            const isNew = !servers[name];
+            const portForwards = server.port_forwards || [];
+            const isViewMode = mode === 'view';
+
+            return `
+                <div class="form-view" data-mode="${mode}">
+                    <form id="server-form">
+                        <fieldset>
+                            <legend>基本信息</legend>
+                            <div class="form-grid">
+                                <label for="display_name">显示名称</label> <input type="text" id="display_name" placeholder="例如: 公司跳板机" value="${server.display_name || ''}" class="transition-colors" ${isViewMode ? 'readonly' : ''}>
+                                <label for="name">连接名称</label> <input type="text" id="name" placeholder="用于命令行的唯一ID (如 my-server)" value="${isNew ? '' : name}" required class="transition-colors" ${isViewMode ? 'readonly' : ''}>
+                                <label for="host">主机</label> <input type="text" id="host" placeholder="IP 地址或域名" value="${server.host || ''}" required class="transition-colors" ${isViewMode ? 'readonly' : ''}>
+                                <label for="port">端口</label> <input type="number" id="port" placeholder="22" value="${server.port || ''}" class="transition-colors" ${isViewMode ? 'readonly' : ''}>
+                            </div>
+                        </fieldset>
+                        <fieldset>
+                            <legend>身份验证</legend>
+                            <div class="form-grid">
+                                <label for="user">用户名</label> <input type="text" id="user" value="${server.user || ''}" required class="transition-colors" ${isViewMode ? 'readonly' : ''}>
+                                <label for="password">密码</label> <input type="password" id="password" placeholder="使用密钥认证则留空" value="${server.password || ''}" class="transition-colors" ${isViewMode ? 'readonly' : ''}>
+                                <label></label> <div class="full-width checkbox-group"><input type="checkbox" id="store-plaintext" ${(!server.is_password_encrypted && server.password) ? 'checked' : ''} ${isViewMode ? 'disabled' : ''}><label for="store-plaintext">明文存储密码 (不推荐)</label></div>
+                                <label for="keyfile">私钥文件</label> <input type="text" id="keyfile" placeholder="例如: ~/.ssh/id_rsa" value="${server.keyfile || ''}" class="transition-colors" ${isViewMode ? 'readonly' : ''}>
+                            </div>
+                        </fieldset>
+                        <fieldset>
+                            <legend>高级选项</legend>
+                            <div class="form-grid">
+                               <label></label>
+                               <div class="full-width checkbox-group">
+                                   <input type="checkbox" id="x11-forwarding" ${server.x11_forwarding ? 'checked' : ''} ${isViewMode ? 'disabled' : ''}><label for="x11-forwarding">启用 X11 转发</label>
+                               </div>
+                               <label>端口转发</label>
+                               <div class="full-width">
+                                   <div id="port-forward-list" class="pf-list">${portForwards.map((pf, i) => createPortForwardItemHTML(pf, i, mode)).join('')}</div>
+                                   ${mode === 'edit' ? '<button type="button" id="add-pf-btn" class="button transition-colors" style="margin-top: 12px;">添加转发规则</button>' : ''}
+                               </div>
+                            </div>
+                        </fieldset>
+                    </form>
+                </div>`;
+        }
+
+        function createPortForwardItemHTML(pf, index, mode) {
+            const types = {local: '本地', remote: '远程', dynamic: '动态'};
+            const explanations = {
+                local: '将本地电脑的指定端口流量，通过SSH服务器转发到目标地址。',
+                remote: '将SSH服务器的指定端口流量，转发回本地电脑可访问的地址。',
+                dynamic: '在本地电脑上创建一个SOCKS代理，所有流量经由SSH服务器转发。'
+            };
+
+            if (mode === 'view') {
+                let summary = '';
+                if (pf.type === 'local') summary = `本地 ${pf.local_port || '?'} → ${pf.remote_host || '?'}:${pf.remote_port || '?'}`;
+                else if (pf.type === 'remote') summary = `远程 ${pf.remote_port || '?'} → ${pf.local_host || '?'}:${pf.local_port || '?'}`;
+                else if (pf.type === 'dynamic') summary = `动态 (SOCKS) ${pf.local_port || '?'}`;
+                return `<div class="pf-item"><div class="pf-item-header"><div class="pf-view-summary">${summary}</div></div></div>`;
+            }
+
+            return `
+                <div class="pf-item" data-index="${index}">
+                    <div class="pf-item-header">
+                        <div class="pf-type-selector">${Object.keys(types).map(t => `<button type="button" data-type="${t}" class="${pf.type === t ? 'active' : ''} transition-colors">${types[t]}</button>`).join('')}</div>
+                        <button type="button" class="button danger transition-colors" data-action="delete-pf">删除</button>
+                    </div>
+                    <div class="pf-item-body">
+                        <div class="pf-config-grid">
+                            ${pf.type === 'local' ? `<div><label>本地端口</label><input type="number" data-key="local_port" value="${pf.local_port || ''}"></div><div><label>远程主机</label><input type="text" data-key="remote_host" value="${pf.remote_host || 'localhost'}"></div><div><label>远程端口</label><input type="number" data-key="remote_port" value="${pf.remote_port || ''}"></div>` : ''}
+                            ${pf.type === 'remote' ? `<div><label>远程端口</label><input type="number" data-key="remote_port" value="${pf.remote_port || ''}"></div><div><label>本地主机</label><input type="text" data-key="local_host" value="${pf.local_host || 'localhost'}"></div><div><label>本地端口</label><input type="number" data-key="local_port" value="${pf.local_port || ''}"></div>` : ''}
+                            ${pf.type === 'dynamic' ? `<div><label>本地SOCKS端口</label><input type="number" data-key="local_port" value="${pf.local_port || ''}"></div>` : ''}
+                        </div>
+                        <div class="pf-explanation">${explanations[pf.type]}</div>
+                    </div>
+                </div>`;
+        }
+
+        async function handleSave(originalName, isNew) {
+            const form = document.getElementById('server-form');
+            const newName = form.querySelector('#name').value.trim();
+            if (!newName) return alert('连接名称不能为空。');
+            if (/\s/.test(newName)) return alert('连接名称不能包含空格。');
+
+            const serverData = {
+                display_name: form.querySelector('#display_name').value.trim(),
+                name: newName, host: form.querySelector('#host').value.trim(),
+                port: form.querySelector('#port').value, user: form.querySelector('#user').value.trim(),
+                password: form.querySelector('#password').value,
+                store_password_as_plaintext: form.querySelector('#store-plaintext').checked,
+                keyfile: form.querySelector('#keyfile').value.trim(),
+                x11_forwarding: form.querySelector('#x11-forwarding').checked,
+                port_forwards: Array.from(document.querySelectorAll('.pf-item')).map(item => {
+                    const type = item.querySelector('.pf-type-selector .active').dataset.type;
+                    const inputs = Array.from(item.querySelectorAll('input[data-key]'));
+                    const rule = {type};
+                    inputs.forEach(input => rule[input.dataset.key] = input.value);
+                    return rule;
+                })
+            };
+
+            try {
+                await api('/api/server', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({server: serverData, original_name: isNew ? null : originalName})
+                });
+                currentServerName = newName;
+                currentMode = 'view';
+                await loadAndRender();
+            } catch (error) { /* api helper handles alert */
+            }
+        }
+
+        // --- Event Delegation ---
+        serverListEl.addEventListener('click', (e) => {
+            const li = e.target.closest('.server-list-item');
+            if (li && li.dataset.name && currentServerName !== li.dataset.name) {
+                currentServerName = li.dataset.name;
+                currentMode = 'view';
+                renderServerList();
+                renderMainContent();
+            }
+        });
+
+        // --- Context Menu Logic ---
+        serverListEl.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            const li = e.target.closest('.server-list-item');
+            if (!li) return;
+
+            const name = li.dataset.name;
+            contextMenuEl.style.top = `${e.clientY}px`;
+            contextMenuEl.style.left = `${e.clientX}px`;
+            contextMenuEl.style.display = 'block';
+            contextMenuEl.dataset.targetName = name;
+        });
+
+        document.addEventListener('click', () => {
+            contextMenuEl.style.display = 'none';
+        });
+
+        contextMenuEl.addEventListener('click', async (e) => {
+            const action = e.target.dataset.action;
+            const targetName = contextMenuEl.dataset.targetName;
+            if (!action || !targetName) return;
+
+            contextMenuEl.style.display = 'none'; // Hide menu immediately
+
+            if (action === 'delete') {
+                await deleteServer(targetName);
+            } else if (action === 'copy') {
+                try {
+                    await navigator.clipboard.writeText(`sshc "${targetName}"`);
+                    // Optional: show a small notification
+                    alert(`命令 'sshc "${targetName}"' 已复制到剪贴板。`);
+                } catch (err) {
+                    alert('复制失败: ' + err);
+                }
+            }
+        });
+
+
+        addNewBtn.onclick = () => {
+            currentServerName = `new-connection-${Date.now()}`;
+            currentMode = 'edit';
+            renderMainContent();
+        };
+
+        contentActionsEl.addEventListener('click', async (e) => {
+            const button = e.target.closest('button');
+            if (!button) return;
+            switch (button.id) {
+                case 'edit-btn':
+                    currentMode = 'edit';
+                    renderMainContent();
+                    break;
+                case 'cancel-btn':
+                    currentMode = servers[currentServerName] ? 'view' : 'placeholder';
+                    if (currentMode === 'placeholder') currentServerName = null;
+                    renderMainContent();
+                    renderServerList();
+                    break;
+                case 'save-btn':
+                    await handleSave(currentServerName, !servers[currentServerName]);
+                    break;
+                case 'delete-btn':
+                    await deleteServer(currentServerName);
+                    break;
+            }
+        });
+
+        contentCardEl.addEventListener('click', (e) => {
+            const button = e.target.closest('button');
+            if (!button) return;
+            const pfItem = button.closest('.pf-item');
+
+            if (button.id === 'add-pf-btn') {
+                const list = document.getElementById('port-forward-list');
+                const newIndex = list.children.length;
+                list.insertAdjacentHTML('beforeend', createPortForwardItemHTML({type: 'local'}, newIndex, 'edit'));
+            } else if (button.dataset.action === 'delete-pf' && pfItem) {
+                pfItem.remove();
+            } else if (button.dataset.type && pfItem) {
+                const newType = button.dataset.type;
+                const index = parseInt(pfItem.dataset.index);
+                // Rerender just this item
+                const tempRule = {type: newType};
+                pfItem.outerHTML = createPortForwardItemHTML(tempRule, index, 'edit');
+            }
+        });
+
+        searchInput.addEventListener('input', renderServerList);
+        loadAndRender();
+    });
+</script>
+
+</body>
+</html>
