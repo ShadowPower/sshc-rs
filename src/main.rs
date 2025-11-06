@@ -6,7 +6,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{delete, get, post},
 };
-use clap::{CommandFactory, Parser};
+use clap::{Parser, Subcommand};
 use log::warn;
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
@@ -19,10 +19,17 @@ use std::{
 };
 use tokio::net::TcpListener;
 
+mod api;
+mod config_cli;
+mod transfer;
+mod tui;
+mod tutorial;
+
 // --- 静态文件嵌入 ---
 #[derive(Embed)]
 #[folder = "."]
 #[include = "index.html"]
+#[include = "TUTORIAL.md"]
 struct Asset;
 
 // --- 命令行接口定义 (CLI) ---
@@ -30,18 +37,54 @@ struct Asset;
 #[command(
     author,
     version,
-    about = "一个简单的 SSH 连接管理器。",
-    after_help = "示例: 'sshc my-server' (SSH), 'sshc my-server -f' (FileZilla), 'sshc --config' (Web UI)"
+    about = "一个强大且易用的 SSH 连接管理器。",
+    long_about = "一个集成了 TUI、Web UI、人类友好和机器友好 CLI 的 SSH 连接管理器。"
 )]
 struct Cli {
-    #[arg(help = "要连接的服务器名称。")]
-    server_name: Option<String>,
-    #[arg(long, help = "打开基于 Web 的配置界面。")]
-    config: bool,
-    #[arg(short, long, help = "列出所有已配置的服务器。")]
-    list: bool,
-    #[arg(short, long, help = "使用 FileZilla 代替 SSH 连接指定的服务器。")]
-    filezilla: bool,
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// 通过 SSH 连接服务器 (不带名称则进入交互模式)
+    #[command(alias = "c")]
+    Connect { name: Option<String> },
+
+    /// 通过 FileZilla 连接服务器 (不带名称则进入交互模式)
+    #[command(alias = "f")]
+    Filezilla { name: Option<String> },
+
+    /// 以人类可读格式列出所有服务器
+    #[command(alias = "l")]
+    List,
+
+    /// 启动 Web UI 配置界面
+    #[command(alias = "w")]
+    Web,
+
+    /// [人类友好] 管理服务器配置
+    #[command(subcommand, alias = "conf")]
+    Config(config_cli::ConfigCommands),
+
+    /// [机器友好] 通过 JSON API 管理配置
+    #[command(subcommand)]
+    Api(api::ApiCommands),
+
+    /// 导出所有配置为一条可移植的命令
+    Export,
+
+    /// 从字符串导入配置
+    Import {
+        /// 由 'export' 命令生成的 Base85 编码字符串
+        data: String,
+        /// 强制导入，不进行确认
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// 显示详细的用法教程
+    #[command(alias = "t")]
+    Tutorial,
 }
 
 // --- Serde 辅助模块 ---
@@ -69,51 +112,45 @@ mod serde_helpers {
 // --- 统一的数据结构 ---
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-struct Config {
+pub struct Config {
     #[serde(default)]
-    servers: BTreeMap<String, Server>,
+    pub servers: BTreeMap<String, Server>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "snake_case")]
-struct Server {
-    // 核心配置字段
+pub struct Server {
     #[serde(default)]
-    host: String,
+    pub host: String,
     #[serde(default)]
-    user: String,
+    pub user: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    display_name: Option<String>,
+    pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "serde_helpers::empty_string_as_none")]
-    port: Option<u16>,
+    pub port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    keyfile: Option<String>,
+    pub keyfile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    x11_forwarding: Option<bool>,
+    pub x11_forwarding: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    port_forwards: Vec<PortForward>,
+    pub port_forwards: Vec<PortForward>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    ssh_prefix_command: Option<String>,
-
-    // 用于存储的密码字段
+    pub ssh_prefix_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    password: Option<String>,
+    pub password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    password_encrypted: Option<String>,
-
-    // --- 用于 API 交互的临时字段 ---
-    // 这些字段不会被写入 TOML 文件
+    pub password_encrypted: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    store_password_as_plaintext: Option<bool>,
+    pub store_password_as_plaintext: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    is_password_encrypted: Option<bool>,
+    pub is_password_encrypted: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
-enum PortForward {
+pub enum PortForward {
     Local {
         #[serde(deserialize_with = "serde_helpers::empty_string_as_none")]
         local_port: Option<u16>,
@@ -137,12 +174,12 @@ enum PortForward {
 }
 
 // --- 配置管理器 ---
-struct ConfigManager {
+pub struct ConfigManager {
     path: PathBuf,
 }
 
 impl ConfigManager {
-    fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let home_dir = dirs::home_dir().ok_or_else(|| anyhow!("无法获取用户主目录"))?;
         let config_dir = home_dir.join(".sshc");
         Ok(Self {
@@ -150,7 +187,7 @@ impl ConfigManager {
         })
     }
 
-    fn ensure_exists(&self) -> Result<()> {
+    pub fn ensure_exists(&self) -> Result<()> {
         let dir = self.path.parent().unwrap();
         fs::create_dir_all(dir).with_context(|| format!("无法创建配置目录: {:?}", dir))?;
         if !self.path.exists() {
@@ -161,13 +198,13 @@ impl ConfigManager {
         Ok(())
     }
 
-    fn read(&self) -> Result<Config> {
+    pub fn read(&self) -> Result<Config> {
         self.ensure_exists()?;
         let content = fs::read_to_string(&self.path)?;
         toml::from_str(&content).with_context(|| "解析 TOML 配置文件失败")
     }
 
-    fn write(&self, config: &Config) -> Result<()> {
+    pub fn write(&self, config: &Config) -> Result<()> {
         self.ensure_exists()?;
         fs::write(&self.path, toml::to_string_pretty(config)?)
             .with_context(|| format!("无法写入配置文件: {:?}", self.path))
@@ -175,7 +212,7 @@ impl ConfigManager {
 }
 
 // --- 加密模块 ---
-mod crypto {
+pub mod crypto {
     use anyhow::{Result, anyhow};
     use fernet::Fernet;
     use log::warn;
@@ -201,7 +238,7 @@ mod crypto {
 }
 
 // --- SSH 连接逻辑 ---
-mod ssh {
+pub mod ssh {
     use super::{PortForward, Server, crypto};
     #[cfg(not(windows))]
     use anyhow::anyhow;
@@ -212,7 +249,6 @@ mod ssh {
         if server.host.is_empty() || server.user.is_empty() {
             return Err(anyhow!("连接失败：服务器配置不完整 (缺少主机或用户名)。"));
         }
-
         let mut cmd: Command;
         if let Some(prefix) = server
             .ssh_prefix_command
@@ -224,7 +260,6 @@ mod ssh {
         } else {
             cmd = Command::new("ssh");
         }
-
         cmd.arg("-tt");
         cmd.args([
             "-o",
@@ -262,9 +297,7 @@ mod ssh {
                 } => {
                     cmd.arg("-D").arg(lp.to_string());
                 }
-                _ => {
-                    warn!("忽略了一个不完整的端口转发规则。");
-                }
+                _ => warn!("忽略了一个不完整的端口转发规则。"),
             };
         }
         cmd.arg(format!("{}@{}", server.user, server.host));
@@ -326,7 +359,7 @@ mod ssh {
 }
 
 // --- FileZilla 集成 ---
-mod filezilla {
+pub mod filezilla {
     use super::{Server, crypto};
     use anyhow::{Context, Result, anyhow};
     use log::warn;
@@ -357,7 +390,6 @@ mod filezilla {
         if server.host.is_empty() || server.user.is_empty() {
             return Err(anyhow!("连接失败：服务器配置不完整 (缺少主机或用户名)。"));
         }
-
         let path = find_path()?;
         let password = server.password.clone().or_else(|| {
             server
@@ -457,7 +489,6 @@ async fn get_servers(State(state): State<AppState>) -> Response {
             return (StatusCode::INTERNAL_SERVER_ERROR, "服务器内部状态错误").into_response();
         }
     };
-
     match guard.read() {
         Ok(config) => {
             let api_servers: BTreeMap<String, Server> = config
@@ -490,19 +521,13 @@ async fn save_server(
             return (StatusCode::INTERNAL_SERVER_ERROR, "服务器内部状态错误").into_response();
         }
     };
-
     let mut config = match guard.read() {
         Ok(c) => c,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
-
     let mut server_to_save = payload.server;
-
-    // 清理可选字段
     server_to_save.keyfile = server_to_save.keyfile.filter(|s| !s.is_empty());
     server_to_save.ssh_prefix_command = server_to_save.ssh_prefix_command.filter(|s| !s.is_empty());
-
-    // 过滤掉无效的端口转发规则
     server_to_save.port_forwards.retain(|pf| match pf {
         PortForward::Local {
             local_port,
@@ -516,12 +541,9 @@ async fn save_server(
         } => remote_port.is_some() && !local_host.is_empty() && local_port.is_some(),
         PortForward::Dynamic { local_port } => local_port.is_some(),
     });
-
-    // 处理密码逻辑
     let store_plaintext = server_to_save.store_password_as_plaintext.unwrap_or(false);
     let password_from_frontend = server_to_save.password.take();
     server_to_save.password_encrypted = None;
-
     if let Some(pass) = password_from_frontend.filter(|s| !s.is_empty()) {
         if store_plaintext {
             server_to_save.password = Some(pass);
@@ -534,19 +556,14 @@ async fn save_server(
             }
         }
     }
-
-    // 在保存到 TOML 前，清除所有临时 API 字段
     server_to_save.store_password_as_plaintext = None;
     server_to_save.is_password_encrypted = None;
-
-    // 更新或插入配置
     if let Some(original_name) = payload.original_name.as_deref() {
         if original_name != payload.name {
             config.servers.remove(original_name);
         }
     }
     config.servers.insert(payload.name, server_to_save);
-
     match guard.write(&config) {
         Ok(_) => Json(StatusResponse { status: "ok" }).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
@@ -561,12 +578,10 @@ async fn delete_server(State(state): State<AppState>, Path(name): Path<String>) 
             return (StatusCode::INTERNAL_SERVER_ERROR, "服务器内部状态错误").into_response();
         }
     };
-
     let mut config = match guard.read() {
         Ok(c) => c,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
-
     if config.servers.remove(&name).is_some() {
         match guard.write(&config) {
             Ok(_) => StatusCode::OK.into_response(),
@@ -577,63 +592,79 @@ async fn delete_server(State(state): State<AppState>, Path(name): Path<String>) 
     }
 }
 
+// --- 命令行列表 ---
+fn list_servers(config: &Config) -> Result<()> {
+    if config.servers.is_empty() {
+        println!("未配置服务器。请使用 'sshc web' 或 'sshc config add' 添加。");
+    } else {
+        println!("可用的服务器:");
+        for (name, server) in &config.servers {
+            let display = server
+                .display_name
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(name);
+            println!("  - {} ({})", display, name);
+            if server.user.is_empty() || server.host.is_empty() {
+                println!("    └─ (配置不完整)");
+            } else {
+                println!(
+                    "    └─ {}@{}:{}",
+                    server.user,
+                    server.host,
+                    server.port.unwrap_or(22)
+                );
+            }
+            if let Some(prefix) = &server.ssh_prefix_command {
+                if !prefix.is_empty() {
+                    println!("      ├─ Prefix: {}", prefix);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn connect_by_name(config: &Config, name: &str, use_filezilla: bool) -> Result<()> {
+    let server = config
+        .servers
+        .get(name)
+        .ok_or_else(|| anyhow!("错误: 未找到服务器 '{}'", name))?;
+    if use_filezilla {
+        filezilla::connect(server)?;
+    } else {
+        ssh::connect(server)?;
+    }
+    Ok(())
+}
+
 // --- 主程序入口 ---
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Cli::parse();
     let config_manager = ConfigManager::new()?;
-    if args.config {
-        run_web_ui().await?;
-    } else if args.list {
-        let config = config_manager.read()?;
-        if config.servers.is_empty() {
-            println!("未配置服务器。请使用 'sshc --config' 添加。");
-        } else {
-            println!("可用的服务器:");
-            for (name, server) in &config.servers {
-                let display = server
-                    .display_name
-                    .as_deref()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or(name);
-                println!("  - {} ({})", display, name);
 
-                if server.user.is_empty() || server.host.is_empty() {
-                    println!("    └─ (配置不完整)");
-                } else {
-                    println!(
-                        "    └─ {}@{}:{}",
-                        server.user,
-                        server.host,
-                        server.port.unwrap_or(22)
-                    );
-                }
-
-                if let Some(prefix) = &server.ssh_prefix_command {
-                    if !prefix.is_empty() {
-                        println!("      ├─ Prefix: {}", prefix);
-                    }
-                }
-            }
+    match args.command {
+        None => tui::interactive_connect(&config_manager, tui::ConnectMode::Ssh)?,
+        Some(Commands::Connect { name }) => match name {
+            Some(n) => connect_by_name(&config_manager.read()?, &n, false)?,
+            None => tui::interactive_connect(&config_manager, tui::ConnectMode::Ssh)?,
+        },
+        Some(Commands::Filezilla { name }) => match name {
+            Some(n) => connect_by_name(&config_manager.read()?, &n, true)?,
+            None => tui::interactive_connect(&config_manager, tui::ConnectMode::Filezilla)?,
+        },
+        Some(Commands::List) => list_servers(&config_manager.read()?)?,
+        Some(Commands::Web) => run_web_ui().await?,
+        Some(Commands::Config(cmd)) => config_cli::handle_config_command(cmd, &config_manager)?,
+        Some(Commands::Api(cmd)) => api::handle_api_command(cmd, &config_manager)?,
+        Some(Commands::Export) => transfer::export_config(&config_manager)?,
+        Some(Commands::Import { data, force }) => {
+            transfer::import_config(&config_manager, &data, force)?
         }
-    } else if let Some(server_name) = args.server_name {
-        let config = config_manager.read()?;
-        let server = config
-            .servers
-            .get(&server_name)
-            .ok_or_else(|| anyhow!("错误: 未找到服务器 '{}'", server_name))?;
-        if args.filezilla {
-            filezilla::connect(server)?;
-        } else {
-            ssh::connect(server)?;
-        }
-    } else if args.filezilla {
-        return Err(anyhow!(
-            "错误: -f/--filezilla 标志必须与服务器名称一起使用。"
-        ));
-    } else {
-        Cli::command().print_help()?;
+        Some(Commands::Tutorial) => tutorial::show()?,
     }
+
     Ok(())
 }
