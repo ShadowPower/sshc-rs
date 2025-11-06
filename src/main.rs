@@ -66,77 +66,46 @@ mod serde_helpers {
     }
 }
 
-// --- 配置数据结构 ---
+// --- 统一的数据结构 ---
 
-// 这是存储在 TOML 文件中的实际结构
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 struct Config {
     #[serde(default)]
-    servers: BTreeMap<String, ServerForToml>,
+    servers: BTreeMap<String, Server>,
 }
 
-// 用于 TOML 序列化的结构，不包含对前端友好的字段
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "snake_case")]
-struct ServerForToml {
+struct Server {
+    // 核心配置字段
     host: String,
     user: String,
-
     #[serde(skip_serializing_if = "Option::is_none")]
     display_name: Option<String>,
-
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "serde_helpers::empty_string_as_none")]
     port: Option<u16>,
-
     #[serde(skip_serializing_if = "Option::is_none")]
     keyfile: Option<String>,
-
     #[serde(skip_serializing_if = "Option::is_none")]
     x11_forwarding: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    port_forwards: Vec<PortForward>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ssh_prefix_command: Option<String>,
 
+    // 用于存储的密码字段
     #[serde(skip_serializing_if = "Option::is_none")]
     password: Option<String>,
-
     #[serde(skip_serializing_if = "Option::is_none")]
     password_encrypted: Option<String>,
 
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    port_forwards: Vec<PortForward>,
-}
-
-// 用于和前端 Web UI 交互的结构
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "snake_case")]
-struct ServerForWeb {
-    name: String,
-    host: String,
-    user: String,
-    display_name: Option<String>,
-    #[serde(default, deserialize_with = "serde_helpers::empty_string_as_none")]
-    port: Option<u16>,
-    keyfile: Option<String>,
-    x11_forwarding: Option<bool>,
-    password: Option<String>,
+    // --- 用于 API 交互的临时字段 ---
+    // 这些字段不会被写入 TOML 文件
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     store_password_as_plaintext: Option<bool>,
-    #[serde(default)]
-    port_forwards: Vec<PortForward>,
-}
-
-// 用于序列化为 JSON 发送给前端的结构
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "snake_case")]
-struct ServerApiResponse {
-    name: String,
-    host: String,
-    user: String,
-    display_name: Option<String>,
-    port: Option<u16>,
-    keyfile: Option<String>,
-    x11_forwarding: Option<bool>,
-    password: Option<String>,
-    is_password_encrypted: bool,
-    port_forwards: Vec<PortForward>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    is_password_encrypted: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -199,84 +168,6 @@ impl ConfigManager {
         fs::write(&self.path, toml::to_string_pretty(config)?)
             .with_context(|| format!("无法写入配置文件: {:?}", self.path))
     }
-
-    fn get_servers_for_api(&self) -> Result<BTreeMap<String, ServerApiResponse>> {
-        let config = self.read()?;
-        let mut api_servers = BTreeMap::new();
-
-        for (name, server_toml) in config.servers {
-            let (password, is_encrypted) = if let Some(encrypted) = server_toml.password_encrypted {
-                (Some(crypto::decrypt_password(&encrypted)), true)
-            } else {
-                (server_toml.password, false)
-            };
-
-            api_servers.insert(
-                name.clone(),
-                ServerApiResponse {
-                    name,
-                    host: server_toml.host,
-                    user: server_toml.user,
-                    display_name: server_toml.display_name,
-                    port: server_toml.port,
-                    keyfile: server_toml.keyfile,
-                    x11_forwarding: server_toml.x11_forwarding,
-                    password,
-                    is_password_encrypted: is_encrypted,
-                    port_forwards: server_toml.port_forwards,
-                },
-            );
-        }
-        Ok(api_servers)
-    }
-
-    fn save_server(&self, server_web: ServerForWeb, original_name: Option<&str>) -> Result<()> {
-        let name = server_web.name;
-        let mut config = self.read()?;
-
-        // 模拟 Python 版的空值清理逻辑
-        let keyfile = server_web.keyfile.filter(|s| !s.is_empty());
-        let display_name = server_web.display_name; // display_name 允许为空字符串
-
-        let mut server_toml = ServerForToml {
-            host: server_web.host,
-            user: server_web.user,
-            display_name,
-            port: server_web.port,
-            keyfile,
-            x11_forwarding: server_web.x11_forwarding,
-            password: None,
-            password_encrypted: None,
-            port_forwards: server_web.port_forwards,
-        };
-
-        // 处理密码
-        let store_plaintext = server_web.store_password_as_plaintext.unwrap_or(false);
-        if let Some(pass) = server_web.password.filter(|s| !s.is_empty()) {
-            if store_plaintext {
-                server_toml.password = Some(pass);
-            } else {
-                server_toml.password_encrypted = Some(crypto::encrypt_password(&pass)?);
-            }
-        }
-
-        if original_name.is_some() && original_name != Some(&name) {
-            config.servers.remove(original_name.unwrap());
-        }
-
-        config.servers.insert(name, server_toml);
-        self.write(&config)
-    }
-
-    fn delete_server(&self, name: &str) -> Result<bool> {
-        let mut config = self.read()?;
-        if config.servers.remove(name).is_some() {
-            self.write(&config)?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
 }
 
 // --- 加密模块 ---
@@ -307,14 +198,25 @@ mod crypto {
 
 // --- SSH 连接逻辑 ---
 mod ssh {
-    use super::{PortForward, ServerForToml, crypto};
+    use super::{PortForward, Server, crypto};
     #[cfg(not(windows))]
     use anyhow::anyhow;
     use anyhow::{Context, Result};
     use log::warn;
     use std::process::Command;
-    pub fn connect(server: &ServerForToml) -> Result<()> {
-        let mut cmd = Command::new("ssh");
+    pub fn connect(server: &Server) -> Result<()> {
+        let mut cmd: Command;
+        if let Some(prefix) = server
+            .ssh_prefix_command
+            .as_deref()
+            .filter(|s| !s.is_empty())
+        {
+            cmd = Command::new(prefix);
+            cmd.arg("ssh");
+        } else {
+            cmd = Command::new("ssh");
+        }
+
         cmd.arg("-tt");
         cmd.args([
             "-o",
@@ -417,7 +319,7 @@ mod ssh {
 
 // --- FileZilla 集成 ---
 mod filezilla {
-    use super::{ServerForToml, crypto};
+    use super::{Server, crypto};
     use anyhow::{Context, Result, anyhow};
     use log::warn;
     use std::path::PathBuf;
@@ -443,7 +345,7 @@ mod filezilla {
             .find(|p| p.exists())
             .ok_or_else(|| anyhow!("未能找到 FileZilla"))
     }
-    pub fn connect(server: &ServerForToml) -> Result<()> {
+    pub fn connect(server: &Server) -> Result<()> {
         let path = find_path()?;
         let password = server.password.clone().or_else(|| {
             server
@@ -524,8 +426,10 @@ type AppState = Arc<Mutex<ConfigManager>>;
 
 #[derive(Deserialize)]
 struct SaveServerPayload {
-    server: ServerForWeb,
+    name: String,
     original_name: Option<String>,
+    #[serde(flatten)]
+    server: Server,
 }
 
 #[derive(Serialize)]
@@ -541,8 +445,24 @@ async fn get_servers(State(state): State<AppState>) -> Response {
             return (StatusCode::INTERNAL_SERVER_ERROR, "服务器内部状态错误").into_response();
         }
     };
-    match guard.get_servers_for_api() {
-        Ok(servers) => Json(servers).into_response(),
+
+    match guard.read() {
+        Ok(config) => {
+            let api_servers: BTreeMap<String, Server> = config
+                .servers
+                .into_iter()
+                .map(|(name, mut server)| {
+                    if let Some(encrypted) = server.password_encrypted.take() {
+                        server.password = Some(crypto::decrypt_password(&encrypted));
+                        server.is_password_encrypted = Some(true);
+                    } else if server.password.is_some() {
+                        server.is_password_encrypted = Some(false);
+                    }
+                    (name, server)
+                })
+                .collect();
+            Json(api_servers).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -558,7 +478,49 @@ async fn save_server(
             return (StatusCode::INTERNAL_SERVER_ERROR, "服务器内部状态错误").into_response();
         }
     };
-    match guard.save_server(payload.server, payload.original_name.as_deref()) {
+
+    let mut config = match guard.read() {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+
+    let mut server_to_save = payload.server;
+
+    // 清理可选字段
+    server_to_save.keyfile = server_to_save.keyfile.filter(|s| !s.is_empty());
+    server_to_save.ssh_prefix_command = server_to_save.ssh_prefix_command.filter(|s| !s.is_empty());
+
+    // 处理密码逻辑
+    let store_plaintext = server_to_save.store_password_as_plaintext.unwrap_or(false);
+    let password_from_frontend = server_to_save.password.take();
+    server_to_save.password_encrypted = None;
+
+    if let Some(pass) = password_from_frontend.filter(|s| !s.is_empty()) {
+        if store_plaintext {
+            server_to_save.password = Some(pass);
+        } else {
+            match crypto::encrypt_password(&pass) {
+                Ok(encrypted) => server_to_save.password_encrypted = Some(encrypted),
+                Err(e) => {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+                }
+            }
+        }
+    }
+
+    // 在保存到 TOML 前，清除所有临时 API 字段
+    server_to_save.store_password_as_plaintext = None;
+    server_to_save.is_password_encrypted = None;
+
+    // 更新或插入配置
+    if let Some(original_name) = payload.original_name.as_deref() {
+        if original_name != payload.name {
+            config.servers.remove(original_name);
+        }
+    }
+    config.servers.insert(payload.name, server_to_save);
+
+    match guard.write(&config) {
         Ok(_) => Json(StatusResponse { status: "ok" }).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     }
@@ -572,10 +534,19 @@ async fn delete_server(State(state): State<AppState>, Path(name): Path<String>) 
             return (StatusCode::INTERNAL_SERVER_ERROR, "服务器内部状态错误").into_response();
         }
     };
-    match guard.delete_server(&name) {
-        Ok(true) => StatusCode::OK.into_response(),
-        Ok(false) => (StatusCode::NOT_FOUND, format!("未找到服务器: {}", name)).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+
+    let mut config = match guard.read() {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+
+    if config.servers.remove(&name).is_some() {
+        match guard.write(&config) {
+            Ok(_) => StatusCode::OK.into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    } else {
+        (StatusCode::NOT_FOUND, format!("未找到服务器: {}", name)).into_response()
     }
 }
 
@@ -606,6 +577,9 @@ async fn main() -> Result<()> {
                     server.host,
                     server.port.unwrap_or(22)
                 );
+                if let Some(prefix) = &server.ssh_prefix_command {
+                    println!("      ├─ Prefix: {}", prefix);
+                }
             }
         }
     } else if let Some(server_name) = args.server_name {

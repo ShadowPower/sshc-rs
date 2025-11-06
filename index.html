@@ -156,13 +156,13 @@
         }
 
         .server-list-item .server-info-sub {
-             font-size: 12px;
-             color: var(--text-secondary);
-             opacity: 0.9;
-             white-space: nowrap;
-             overflow: hidden;
-             text-overflow: ellipsis;
-             display: block;
+            font-size: 12px;
+            color: var(--text-secondary);
+            opacity: 0.9;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: block;
         }
 
         .server-list-item.active .server-info,
@@ -344,8 +344,8 @@
         }
 
         .context-menu-item.danger:hover {
-             background-color: var(--text-danger);
-             color: white;
+            background-color: var(--text-danger);
+            color: white;
         }
 
         /* --- Port Forwarding --- */
@@ -503,15 +503,16 @@
         }
 
         async function deleteServer(name) {
-             if (confirm(`确实要删除连接 "${name}" 吗？此操作无法恢复。`)) {
+            if (confirm(`确实要删除连接 "${name}" 吗？此操作无法恢复。`)) {
                 try {
                     await api(`/api/server/${name}`, {method: 'DELETE'});
                     if (currentServerName === name) {
-                       currentServerName = null;
-                       currentMode = 'placeholder';
+                        currentServerName = null;
+                        currentMode = 'placeholder';
                     }
                     await loadAndRender();
-                } catch (error) { /* handled by api */ }
+                } catch (error) { /* handled by api */
+                }
             }
         }
 
@@ -535,14 +536,13 @@
             });
 
             for (const name of sortedNames) {
-                 const server = servers[name];
-                 const displayName = server.display_name || name;
+                const server = servers[name];
+                const displayName = server.display_name || name;
                 if (!name.toLowerCase().includes(filter) && !displayName.toLowerCase().includes(filter)) continue;
 
                 const li = document.createElement('li');
                 li.className = `server-list-item transition-colors ${name === currentServerName ? 'active' : ''}`;
                 li.dataset.name = name;
-                // MODIFIED: Display name and config name format
                 li.innerHTML = `<span class="server-name">${displayName}</span>
                                 <span class="server-info">(${name})</span>
                                 <span class="server-info-sub">${server.user || ''}@${server.host || ''}</span>`;
@@ -587,7 +587,7 @@
                             <legend>基本信息</legend>
                             <div class="form-grid">
                                 <label for="display_name">显示名称</label> <input type="text" id="display_name" placeholder="例如: 公司跳板机" value="${server.display_name || ''}" class="transition-colors" ${isViewMode ? 'readonly' : ''}>
-                                <label for="name">连接名称</label> <input type="text" id="name" placeholder="用于命令行的唯一ID (如 my-server)" value="${isNew ? '' : name}" required class="transition-colors" ${isViewMode ? 'readonly' : ''}>
+                                <label for="name">连接名称</label> <input type="text" id="name" placeholder="用于命令行的唯一ID (如 my-server)" value="${isNew ? '' : name}" required class="transition-colors" ${isViewMode || !isNew ? 'readonly' : ''}>
                                 <label for="host">主机</label> <input type="text" id="host" placeholder="IP 地址或域名" value="${server.host || ''}" required class="transition-colors" ${isViewMode ? 'readonly' : ''}>
                                 <label for="port">端口</label> <input type="number" id="port" placeholder="22" value="${server.port || ''}" class="transition-colors" ${isViewMode ? 'readonly' : ''}>
                             </div>
@@ -608,6 +608,8 @@
                                <div class="full-width checkbox-group">
                                    <input type="checkbox" id="x11-forwarding" ${server.x11_forwarding ? 'checked' : ''} ${isViewMode ? 'disabled' : ''}><label for="x11-forwarding">启用 X11 转发</label>
                                </div>
+                               <label for="ssh_prefix_command">SSH 前缀命令</label>
+                               <input type="text" id="ssh_prefix_command" placeholder="例如: trzsz" value="${server.ssh_prefix_command || ''}" class="transition-colors" ${isViewMode ? 'readonly' : ''}>
                                <label>端口转发</label>
                                <div class="full-width">
                                    <div id="port-forward-list" class="pf-list">${portForwards.map((pf, i) => createPortForwardItemHTML(pf, i, mode)).join('')}</div>
@@ -658,14 +660,20 @@
             if (!newName) return alert('连接名称不能为空。');
             if (/\s/.test(newName)) return alert('连接名称不能包含空格。');
 
-            const serverData = {
+            const requestPayload = {
+                name: newName,
+                original_name: isNew ? null : originalName,
+
+                // Flatten all form fields directly into the payload
                 display_name: form.querySelector('#display_name').value.trim(),
-                name: newName, host: form.querySelector('#host').value.trim(),
-                port: form.querySelector('#port').value, user: form.querySelector('#user').value.trim(),
+                host: form.querySelector('#host').value.trim(),
+                port: form.querySelector('#port').value,
+                user: form.querySelector('#user').value.trim(),
                 password: form.querySelector('#password').value,
-                store_password_as_plaintext: form.querySelector('#store-plaintext').checked,
                 keyfile: form.querySelector('#keyfile').value.trim(),
                 x11_forwarding: form.querySelector('#x11-forwarding').checked,
+                ssh_prefix_command: form.querySelector('#ssh_prefix_command').value.trim(),
+                store_password_as_plaintext: form.querySelector('#store-plaintext').checked,
                 port_forwards: Array.from(document.querySelectorAll('.pf-item')).map(item => {
                     const type = item.querySelector('.pf-type-selector .active').dataset.type;
                     const inputs = Array.from(item.querySelectorAll('input[data-key]'));
@@ -679,7 +687,7 @@
                 await api('/api/server', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({server: serverData, original_name: isNew ? null : originalName})
+                    body: JSON.stringify(requestPayload)
                 });
                 currentServerName = newName;
                 currentMode = 'view';
@@ -740,28 +748,30 @@
         addNewBtn.onclick = () => {
             currentServerName = `new-connection-${Date.now()}`;
             currentMode = 'edit';
+            renderServerList(); // deselect current
             renderMainContent();
         };
 
         contentActionsEl.addEventListener('click', async (e) => {
             const button = e.target.closest('button');
             if (!button) return;
+            const originalName = currentServerName;
             switch (button.id) {
                 case 'edit-btn':
                     currentMode = 'edit';
                     renderMainContent();
                     break;
                 case 'cancel-btn':
-                    currentMode = servers[currentServerName] ? 'view' : 'placeholder';
+                    currentMode = servers[originalName] ? 'view' : 'placeholder';
                     if (currentMode === 'placeholder') currentServerName = null;
                     renderMainContent();
                     renderServerList();
                     break;
                 case 'save-btn':
-                    await handleSave(currentServerName, !servers[currentServerName]);
+                    await handleSave(originalName, !servers[originalName]);
                     break;
                 case 'delete-btn':
-                    await deleteServer(currentServerName);
+                    await deleteServer(originalName);
                     break;
             }
         });
