@@ -240,9 +240,7 @@ pub mod crypto {
 // --- SSH 连接逻辑 ---
 pub mod ssh {
     use super::{PortForward, Server, crypto};
-    #[cfg(not(windows))]
-    use anyhow::anyhow;
-    use anyhow::{Context, Result};
+    use anyhow::{Context, Result, anyhow};
     use log::warn;
     use std::process::Command;
     pub fn connect(server: &Server) -> Result<()> {
