@@ -78,7 +78,9 @@ struct Config {
 #[serde(rename_all = "snake_case")]
 struct Server {
     // 核心配置字段
+    #[serde(default)]
     host: String,
+    #[serde(default)]
     user: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     display_name: Option<String>,
@@ -115,6 +117,7 @@ enum PortForward {
     Local {
         #[serde(deserialize_with = "serde_helpers::empty_string_as_none")]
         local_port: Option<u16>,
+        #[serde(default)]
         remote_host: String,
         #[serde(deserialize_with = "serde_helpers::empty_string_as_none")]
         remote_port: Option<u16>,
@@ -122,6 +125,7 @@ enum PortForward {
     Remote {
         #[serde(deserialize_with = "serde_helpers::empty_string_as_none")]
         remote_port: Option<u16>,
+        #[serde(default)]
         local_host: String,
         #[serde(deserialize_with = "serde_helpers::empty_string_as_none")]
         local_port: Option<u16>,
@@ -205,6 +209,10 @@ mod ssh {
     use log::warn;
     use std::process::Command;
     pub fn connect(server: &Server) -> Result<()> {
+        if server.host.is_empty() || server.user.is_empty() {
+            return Err(anyhow!("连接失败：服务器配置不完整 (缺少主机或用户名)。"));
+        }
+
         let mut cmd: Command;
         if let Some(prefix) = server
             .ssh_prefix_command
@@ -239,14 +247,14 @@ mod ssh {
                     local_port: Some(lp),
                     remote_host,
                     remote_port: Some(rp),
-                } => {
+                } if !remote_host.is_empty() => {
                     cmd.arg("-L").arg(format!("{}:{}:{}", lp, remote_host, rp));
                 }
                 PortForward::Remote {
                     remote_port: Some(rp),
                     local_host,
                     local_port: Some(lp),
-                } => {
+                } if !local_host.is_empty() => {
                     cmd.arg("-R").arg(format!("{}:{}:{}", rp, local_host, lp));
                 }
                 PortForward::Dynamic {
@@ -346,6 +354,10 @@ mod filezilla {
             .ok_or_else(|| anyhow!("未能找到 FileZilla"))
     }
     pub fn connect(server: &Server) -> Result<()> {
+        if server.host.is_empty() || server.user.is_empty() {
+            return Err(anyhow!("连接失败：服务器配置不完整 (缺少主机或用户名)。"));
+        }
+
         let path = find_path()?;
         let password = server.password.clone().or_else(|| {
             server
@@ -490,6 +502,21 @@ async fn save_server(
     server_to_save.keyfile = server_to_save.keyfile.filter(|s| !s.is_empty());
     server_to_save.ssh_prefix_command = server_to_save.ssh_prefix_command.filter(|s| !s.is_empty());
 
+    // 过滤掉无效的端口转发规则
+    server_to_save.port_forwards.retain(|pf| match pf {
+        PortForward::Local {
+            local_port,
+            remote_host,
+            remote_port,
+        } => local_port.is_some() && !remote_host.is_empty() && remote_port.is_some(),
+        PortForward::Remote {
+            remote_port,
+            local_host,
+            local_port,
+        } => remote_port.is_some() && !local_host.is_empty() && local_port.is_some(),
+        PortForward::Dynamic { local_port } => local_port.is_some(),
+    });
+
     // 处理密码逻辑
     let store_plaintext = server_to_save.store_password_as_plaintext.unwrap_or(false);
     let password_from_frontend = server_to_save.password.take();
@@ -571,14 +598,22 @@ async fn main() -> Result<()> {
                     .filter(|s| !s.is_empty())
                     .unwrap_or(name);
                 println!("  - {} ({})", display, name);
-                println!(
-                    "    └─ {}@{}:{}",
-                    server.user,
-                    server.host,
-                    server.port.unwrap_or(22)
-                );
+
+                if server.user.is_empty() || server.host.is_empty() {
+                    println!("    └─ (配置不完整)");
+                } else {
+                    println!(
+                        "    └─ {}@{}:{}",
+                        server.user,
+                        server.host,
+                        server.port.unwrap_or(22)
+                    );
+                }
+
                 if let Some(prefix) = &server.ssh_prefix_command {
-                    println!("      ├─ Prefix: {}", prefix);
+                    if !prefix.is_empty() {
+                        println!("      ├─ Prefix: {}", prefix);
+                    }
                 }
             }
         }
