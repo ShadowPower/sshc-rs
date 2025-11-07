@@ -221,11 +221,20 @@ pub fn download(server: &Server, remote_path_str: &str, local_path: &Path) -> Re
 
         if [ -d "$path" ]; then
             echo "TYPE:dir";
-            printf "SIZE:%s\n" $(du -sb "$path" | cut -f1);
+            if uname | grep -q "Linux"; then
+                printf "SIZE:%s\n" $(du -sb "$path" | cut -f1);
+            else
+                kbytes=$(du -sk "$path" | cut -f1);
+                printf "SIZE:%s\n" $((kbytes * 1024));
+            fi;
             TYPE_CMD="tar -cf - -C {path} .";
         elif [ -f "$path" ]; then
             echo "TYPE:file";
-            printf "SIZE:%s\n" $(stat -c%s "$path");
+            if uname | grep -q "Linux"; then
+                printf "SIZE:%s\n" $(stat -c%s "$path");
+            else
+                printf "SIZE:%s\n" $(stat -f%z "$path");
+            fi;
             TYPE_CMD="cat {path}";
         else
             echo "TYPE:not_found";
