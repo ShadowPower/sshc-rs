@@ -69,6 +69,68 @@
 
 --------------------------------------------------------------------------------
 
+## 命令: `upload` / `download` (别名: `up` / `down`)
+
+在受限环境中通过 SSH 通道安全地传输文件和目录，并带有进度条。它的用法与 `scp` 命令类似。
+
+### `upload` (别名: `up`)
+
+将本地文件或目录上传到远程服务器。
+
+#### 用法:
+
+`sshc up <本地路径> <服务器名称:远程路径>`
+
+#### 示例与说明:
+
+- 上传到用户主目录 (保持原名)
+  `sshc up ./local-file.txt my-server:`
+  说明: 省略远程路径，文件将被上传到服务器上当前用户的主目录，即 `~/local-file.txt`。
+
+- 上传到指定目录 (保持原名)
+  `sshc up C:\data\archive.zip my-server:/opt/backups/`
+  说明: 远程路径以 `/` 结尾，表示一个目录。文件将被上传到 `/opt/backups/archive.zip`。
+
+- 上传并重命名文件
+  `sshc up ./config.yaml my-server:~/app.yaml`
+  说明: 远程路径不以 `/` 结尾，它指定了文件的最终名称和路径。
+
+- 上传整个目录
+  `sshc up ./my-project my-server:~/projects/`
+  说明: 本地目录 `my-project` 将被完整上传到远程的 `~/projects/my-project`。
+
+- 上传目录并重命名
+  `sshc up ./dist my-server:/var/www/my-app`
+  说明: 本地目录 `dist` 的内容将被上传到远程的新目录 `/var/www/my-app` 中。
+
+### `download` (别名: `down`)
+
+从远程服务器下载文件或目录到本地。
+
+#### 用法:
+
+`sshc down <服务器名称:远程路径> <本地路径>`
+
+#### 示例与说明:
+
+- 下载到当前目录 (保持原名)
+  `sshc down my-server:/var/log/app.log .`
+  说明: `.` 表示当前目录。文件将被下载到 `./app.log`。
+
+- 下载到指定目录 (保持原名)
+  `sshc down my-server:~/db_dump.sql C:\Backups\`
+  说明: 本地路径以 `\` 结尾，表示一个目录。文件将被下载到 `C:\Backups\db_dump.sql`。
+
+- 下载并重命名文件
+  `sshc down my-server:/etc/nginx/nginx.conf ./nginx.backup.conf`
+  说明: 本地路径不以分隔符结尾，它指定了文件的最终名称。
+
+- 下载整个目录
+  `sshc down my-server:/etc/nginx ./nginx_config_backup`
+  说明: 远程目录 `/etc/nginx` 将被完整下载到本地的新目录 `./nginx_config_backup` 中。
+
+--------------------------------------------------------------------------------
+
 ## 命令: `config` (别名: `conf`)
 
 这是核心的配置管理模块，允许您在命令行中完成所有配置操作。

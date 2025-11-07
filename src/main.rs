@@ -1,11 +1,13 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use config::{Config, ConfigManager};
+use std::path::PathBuf;
 
 mod cli_api;
 mod config;
 mod config_cli;
 mod crypto;
+mod file_transfer;
 mod filezilla;
 mod ssh;
 mod transfer;
@@ -70,6 +72,22 @@ enum Commands {
         #[arg(short, long)]
         force: bool,
     },
+    /// 上传文件或目录到服务器 (用法: sshc up <本地路径> <服务器:远程路径>)
+    #[command(alias = "up")]
+    Upload {
+        /// 本地源文件或目录路径
+        local_path: PathBuf,
+        /// 远程目标，格式为 <服务器名称:远程路径>
+        destination: String,
+    },
+    /// 从服务器下载文件或目录 (用法: sshc down <服务器:远程路径> <本地路径>)
+    #[command(alias = "down")]
+    Download {
+        /// 远程源，格式为 <服务器名称:远程路径>
+        source: String,
+        /// 本地目标文件或目录路径
+        local_path: PathBuf,
+    },
     /// 显示详细的用法教程
     #[command(alias = "t")]
     Tutorial,
@@ -121,6 +139,20 @@ fn connect_by_name(config: &Config, name: &str, use_filezilla: bool) -> Result<(
     Ok(())
 }
 
+fn parse_remote_arg(arg: &str) -> Result<(String, String)> {
+    match arg.find(':') {
+        Some(i) => {
+            let (name, path) = arg.split_at(i);
+            // `path` 包含冒号，所以从第1个字符开始切片
+            Ok((name.to_string(), path[1..].to_string()))
+        }
+        None => Err(anyhow!(
+            "无效的远程参数格式 '{}'，应为 '<服务器名称>:<远程路径>'",
+            arg
+        )),
+    }
+}
+
 // --- 主程序入口 ---
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -145,6 +177,27 @@ async fn main() -> Result<()> {
         Some(Commands::Export) => transfer::export_config(&config_manager)?,
         Some(Commands::Import { data, force }) => {
             transfer::import_config(&config_manager, &data, force)?
+        }
+        Some(Commands::Upload {
+            local_path,
+            destination,
+        }) => {
+            let (name, remote_path) = parse_remote_arg(&destination)?;
+            let config = config_manager.read()?;
+            let server = config
+                .servers
+                .get(&name)
+                .ok_or_else(|| anyhow!("未找到服务器: {}", name))?;
+            file_transfer::upload(server, &local_path, &remote_path)?
+        }
+        Some(Commands::Download { source, local_path }) => {
+            let (name, remote_path) = parse_remote_arg(&source)?;
+            let config = config_manager.read()?;
+            let server = config
+                .servers
+                .get(&name)
+                .ok_or_else(|| anyhow!("未找到服务器: {}", name))?;
+            file_transfer::download(server, &remote_path, &local_path)?
         }
         Some(Commands::Tutorial) => tutorial::show()?,
     }

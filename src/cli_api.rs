@@ -2,7 +2,7 @@ use crate::{
     config::{ConfigManager, Server},
     crypto,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Subcommand;
 use serde::Deserialize;
 use std::{

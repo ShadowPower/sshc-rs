@@ -5,9 +5,9 @@ use crossterm::{
     event::{self, Event, KeyCode},
     execute,
     style::Print,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use std::io::{stdout, Stdout, Write};
+use std::io::{Stdout, Write, stdout};
 
 type StyledLine = Vec<(String, Style)>;
 

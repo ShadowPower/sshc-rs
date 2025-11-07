@@ -1,4 +1,4 @@
-use crate::{filezilla, ssh, ConfigManager};
+use crate::{ConfigManager, filezilla, ssh};
 use anyhow::Result;
 use inquire::Select;
 use std::fmt;

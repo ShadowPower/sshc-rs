@@ -1,15 +1,15 @@
 use crate::{
+    Asset,
     config::{ConfigManager, PortForward, Server},
     crypto,
-    Asset,
 };
 use anyhow::{Context, Result};
 use axum::{
-    extract::{Path, State}, http::StatusCode,
+    Json, Router,
+    extract::{Path, State},
+    http::StatusCode,
     response::{Html, IntoResponse, Response},
     routing::{delete, get, post},
-    Json,
-    Router,
 };
 use log::warn;
 use serde::{Deserialize, Serialize};
