@@ -150,24 +150,6 @@ impl<'a> SshProcessBuilder<'a> {
         }
     }
 
-    /// 执行远程命令并捕获其标准输出。
-    pub fn execute_for_output(&self) -> Result<std::process::Output> {
-        let mut cmd = build_ssh_command_base(self.server)?;
-        cmd.arg(&self.remote_command);
-
-        let password = self.server.password.clone().or_else(|| {
-            self.server
-                .password_encrypted
-                .as_ref()
-                .map(|enc| crypto::decrypt_password(enc))
-        });
-
-        let mut cmd = prepare_ssh_auth(cmd, password)?;
-
-        cmd.stdin(Stdio::null());
-        cmd.output().context("执行远程命令失败")
-    }
-
     /// 启动一个 SSH 子进程，用于 I/O 管道操作（上传/下载）。
     pub fn spawn_for_io(&self) -> Result<std::process::Child> {
         let mut cmd = build_ssh_command_base(self.server)?;

@@ -1,27 +1,65 @@
 use crate::config::Server;
 use crate::ssh::SshProcessBuilder;
 use anyhow::{Context, Result, anyhow};
-use base64::engine::general_purpose::STANDARD as B64;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use fs_extra::dir::get_size;
 use indicatif::{ProgressBar, ProgressStyle};
+use log::info;
 use std::{
     fs::{self, File},
-    io,
+    io::{self, BufRead, BufReader, Read},
     path::{Path, PathBuf},
     time::Duration,
 };
 
+// --- 传输协议 ---
+//
+// ## 下载协议 (服务器 -> 客户端)
+// 服务器在一次连接中，先发送一个文本元数据头，然后紧跟着原始的二进制数据流。
+//
+// 格式:
+// TYPE:<file|dir|not_found>
+// SIZE:<bytes>
+// COMPRESSION:<zstd|gzip>
+// ---DATA---
+// [原始二进制压缩数据流...]
+//
+// ## 上传协议 (客户端 -> 服务器)
+// 1. 服务器首先探测自身能力，并向客户端发送一行文本，指明期望的压缩算法。
+//    COMPRESSION:<zstd|gzip>
+// 2. 服务器随后进入等待状态，准备从 stdin 接收数据。
+// 3. 客户端读取这一行信息，然后将使用指定算法压缩后的原始二进制数据流写入服务器的 stdin。
+
+#[derive(Debug, Default)]
+struct RemoteMeta {
+    path_type: RemotePathType,
+    size: u64,
+    compression: CompressionAlgorithm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RemotePathType {
     File,
     Directory,
     NotFound,
 }
 
-#[derive(Debug, Clone, Copy)]
+impl Default for RemotePathType {
+    fn default() -> Self {
+        RemotePathType::NotFound
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CompressionAlgorithm {
     Gzip,
     Zstd,
+}
+
+impl Default for CompressionAlgorithm {
+    fn default() -> Self {
+        CompressionAlgorithm::Gzip
+    }
 }
 
 /// 安全地为远程路径添加引号以供 shell 执行，并特殊处理家目录（~）的展开。
@@ -37,44 +75,6 @@ fn quote_remote_path(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
 }
 
-fn execute_remote_command_for_string(server: &Server, command: &str) -> Result<String> {
-    let output = SshProcessBuilder::new(server, command).execute_for_output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!(
-            "远程命令执行失败: {}\n命令: {}",
-            stderr.trim(),
-            command
-        ));
-    }
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
-}
-
-fn get_remote_path_type(server: &Server, remote_path: &str) -> Result<RemotePathType> {
-    let quoted_path = quote_remote_path(remote_path);
-    let command = format!(
-        "if [ -d {} ]; then echo dir; elif [ -f {} ]; then echo file; else echo not_found; fi",
-        quoted_path, quoted_path
-    );
-    let output = execute_remote_command_for_string(server, &command)?;
-    match output.as_str() {
-        "file" => Ok(RemotePathType::File),
-        "dir" => Ok(RemotePathType::Directory),
-        _ => Ok(RemotePathType::NotFound),
-    }
-}
-
-fn get_remote_size(server: &Server, remote_path: &str, path_type: &RemotePathType) -> Result<u64> {
-    let quoted_path = quote_remote_path(remote_path);
-    let command = match path_type {
-        RemotePathType::File => format!("stat -c%s {}", quoted_path),
-        RemotePathType::Directory => format!("du -sb {} | cut -f1", quoted_path),
-        RemotePathType::NotFound => return Err(anyhow!("远程路径未找到: {}", remote_path)),
-    };
-    let output = execute_remote_command_for_string(server, &command)?;
-    output.parse::<u64>().context("解析远程文件大小时失败")
-}
-
 fn create_progress_bar(total_size: u64, message: &str) -> ProgressBar {
     let pb = ProgressBar::new(total_size);
     pb.set_style(ProgressStyle::default_bar()
@@ -86,28 +86,10 @@ fn create_progress_bar(total_size: u64, message: &str) -> ProgressBar {
     pb
 }
 
-fn detect_compression_algorithm(server: &Server) -> Result<CompressionAlgorithm> {
-    let command = "command -v zstd >/dev/null 2>&1";
-    let output = SshProcessBuilder::new(server, command).execute_for_output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            log::info!("服务器支持 zstd，将优先使用 zstd 进行压缩");
-            Ok(CompressionAlgorithm::Zstd)
-        }
-        _ => {
-            log::info!("服务器不支持 zstd，将回退到 gzip 进行压缩");
-            Ok(CompressionAlgorithm::Gzip)
-        }
-    }
-}
-
 pub fn upload(server: &Server, local_path: &Path, destination: &str) -> Result<()> {
     if !local_path.exists() {
         return Err(anyhow!("本地路径不存在: {:?}", local_path));
     }
-
-    let algorithm = detect_compression_algorithm(server)?;
 
     let local_base_name = local_path
         .file_name()
@@ -116,7 +98,6 @@ pub fn upload(server: &Server, local_path: &Path, destination: &str) -> Result<(
 
     let is_dir_upload = local_path.is_dir();
 
-    // 根据用户输入决定最终的远程路径
     let final_remote_path =
         if destination.is_empty() || destination == "~" || destination.ends_with('/') {
             let base_dir = if destination.is_empty() {
@@ -130,21 +111,49 @@ pub fn upload(server: &Server, local_path: &Path, destination: &str) -> Result<(
         };
 
     let quoted_final_path = quote_remote_path(&final_remote_path);
-    let decompressor_cmd = match algorithm {
-        CompressionAlgorithm::Gzip => "gzip -d",
-        CompressionAlgorithm::Zstd => "zstd -d -",
-    };
 
-    let remote_command = if is_dir_upload {
-        format!(
-            "mkdir -p {} && cd {} && base64 -d | {} | tar -xf -",
-            quoted_final_path, quoted_final_path, decompressor_cmd
-        )
-    } else {
-        format!(
-            "mkdir -p \"$(dirname {})\" && base64 -d | {} > {}",
-            quoted_final_path, decompressor_cmd, quoted_final_path
-        )
+    let remote_command = format!(
+        r#"
+        set -eo pipefail;
+        if command -v zstd >/dev/null 2>&1; then
+            echo "COMPRESSION:zstd";
+            DECOMP_CMD="zstd -d -";
+        else
+            echo "COMPRESSION:gzip";
+            DECOMP_CMD="gzip -d";
+        fi;
+
+        if {is_dir_upload}; then
+            mkdir -p {path} && cd {path} && $DECOMP_CMD | tar -xf -;
+        else
+            mkdir -p "$(dirname {path})" && $DECOMP_CMD > {path};
+        fi;
+        "#,
+        is_dir_upload = if is_dir_upload { "true" } else { "false" },
+        path = quoted_final_path
+    );
+
+    let mut child = SshProcessBuilder::new(server, &remote_command).spawn_for_io()?;
+
+    let ssh_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("无法获取 SSH 进程的 stdout"))?;
+    let mut reader = BufReader::new(ssh_stdout);
+
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+
+    let algorithm = match line.trim() {
+        "COMPRESSION:zstd" => {
+            info!("服务器选择 zstd 压缩算法。");
+            CompressionAlgorithm::Zstd
+        }
+        "COMPRESSION:gzip" => {
+            info!("服务器选择 gzip 压缩算法。");
+            CompressionAlgorithm::Gzip
+        }
+        _ => return Err(anyhow!("从服务器收到了无效的压缩协商响应: {}", line.trim())),
     };
 
     let total_size = if is_dir_upload {
@@ -154,19 +163,19 @@ pub fn upload(server: &Server, local_path: &Path, destination: &str) -> Result<(
     };
 
     let pb = create_progress_bar(total_size, "上传中");
-    let mut child = SshProcessBuilder::new(server, &remote_command).spawn_for_io()?;
+    info!("开始数据传输...");
 
     let ssh_stdin = child
         .stdin
         .take()
         .ok_or_else(|| anyhow!("无法获取 SSH 进程的 stdin"))?;
-    let mut b64_writer = base64::write::EncoderWriter::new(ssh_stdin, &B64);
 
     match algorithm {
         CompressionAlgorithm::Gzip => {
-            let mut gz_writer = GzEncoder::new(&mut b64_writer, Compression::fast());
+            let mut gz_writer = GzEncoder::new(ssh_stdin, Compression::fast());
             if is_dir_upload {
-                let mut tar_builder = tar::Builder::new(&mut gz_writer);
+                let mut progress_writer = pb.wrap_write(&mut gz_writer);
+                let mut tar_builder = tar::Builder::new(&mut progress_writer);
                 tar_builder.append_dir_all(".", local_path)?;
                 tar_builder.finish()?;
             } else {
@@ -177,9 +186,10 @@ pub fn upload(server: &Server, local_path: &Path, destination: &str) -> Result<(
             gz_writer.finish()?;
         }
         CompressionAlgorithm::Zstd => {
-            let mut zstd_writer = zstd::stream::Encoder::new(&mut b64_writer, 1)?;
+            let mut zstd_writer = zstd::stream::Encoder::new(ssh_stdin, 1)?;
             if is_dir_upload {
-                let mut tar_builder = tar::Builder::new(&mut zstd_writer);
+                let mut progress_writer = pb.wrap_write(&mut zstd_writer);
+                let mut tar_builder = tar::Builder::new(&mut progress_writer);
                 tar_builder.append_dir_all(".", local_path)?;
                 tar_builder.finish()?;
             } else {
@@ -190,8 +200,6 @@ pub fn upload(server: &Server, local_path: &Path, destination: &str) -> Result<(
             zstd_writer.finish()?;
         }
     }
-
-    b64_writer.finish()?;
 
     let output = child.wait_with_output()?;
     pb.finish_with_message("上传完成");
@@ -204,9 +212,87 @@ pub fn upload(server: &Server, local_path: &Path, destination: &str) -> Result<(
 }
 
 pub fn download(server: &Server, remote_path_str: &str, local_path: &Path) -> Result<()> {
-    let path_type = get_remote_path_type(server, remote_path_str)?;
-    let total_size = get_remote_size(server, remote_path_str, &path_type)?;
-    let algorithm = detect_compression_algorithm(server)?;
+    let quoted_remote_path = quote_remote_path(remote_path_str);
+
+    let remote_command = format!(
+        r#"
+        set -eo pipefail;
+        path={quoted_path};
+
+        if [ -d "$path" ]; then
+            echo "TYPE:dir";
+            printf "SIZE:%s\n" $(du -sb "$path" | cut -f1);
+            TYPE_CMD="tar -cf - -C {path} .";
+        elif [ -f "$path" ]; then
+            echo "TYPE:file";
+            printf "SIZE:%s\n" $(stat -c%s "$path");
+            TYPE_CMD="cat {path}";
+        else
+            echo "TYPE:not_found";
+            exit 0;
+        fi;
+
+        if command -v zstd >/dev/null 2>&1; then
+            echo "COMPRESSION:zstd";
+            COMP_CMD="zstd -1 -c";
+        else
+            echo "COMPRESSION:gzip";
+            COMP_CMD="gzip -1 -c";
+        fi;
+
+        echo "---DATA---";
+
+        exec $TYPE_CMD | $COMP_CMD;
+        "#,
+        quoted_path = quoted_remote_path,
+        path = "$path"
+    );
+
+    let mut child = SshProcessBuilder::new(server, &remote_command).spawn_for_io()?;
+
+    let ssh_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("无法获取 SSH 进程的 stdout"))?;
+
+    let mut reader = BufReader::new(ssh_stdout);
+    let mut meta = RemoteMeta::default();
+
+    loop {
+        let mut line = String::new();
+        let bytes_read = reader.read_line(&mut line)?;
+        if bytes_read == 0 {
+            return Err(anyhow!("SSH 连接在传输元数据时意外关闭"));
+        }
+
+        let trimmed = line.trim();
+        if trimmed == "---DATA---" {
+            break;
+        }
+
+        if let Some((key, value)) = trimmed.split_once(':') {
+            match key {
+                "TYPE" => match value {
+                    "file" => meta.path_type = RemotePathType::File,
+                    "dir" => meta.path_type = RemotePathType::Directory,
+                    "not_found" => return Err(anyhow!("远程路径未找到: {}", remote_path_str)),
+                    _ => return Err(anyhow!("未知的远程路径类型: {}", value)),
+                },
+                "SIZE" => meta.size = value.parse().context("解析远程文件大小时失败")?,
+                "COMPRESSION" => match value {
+                    "zstd" => meta.compression = CompressionAlgorithm::Zstd,
+                    "gzip" => meta.compression = CompressionAlgorithm::Gzip,
+                    _ => return Err(anyhow!("未知的压缩算法: {}", value)),
+                },
+                _ => {}
+            }
+        }
+    }
+
+    info!(
+        "成功解析远程元数据: 类型={:?}, 大小={}, 压缩={:?}",
+        meta.path_type, meta.size, meta.compression
+    );
 
     let remote_base_name = Path::new(remote_path_str)
         .file_name()
@@ -222,43 +308,21 @@ pub fn download(server: &Server, remote_path_str: &str, local_path: &Path) -> Re
         final_local_path.push(remote_base_name);
     }
 
-    let pb = create_progress_bar(total_size, "下载中");
+    let pb = create_progress_bar(meta.size, "下载中");
+    info!("开始数据传输...");
 
-    let quoted_remote_path = quote_remote_path(remote_path_str);
-    let compressor_cmd = match algorithm {
-        CompressionAlgorithm::Gzip => "gzip -1 -c",
-        CompressionAlgorithm::Zstd => "zstd -1 -c",
-    };
+    let buffer = reader.buffer().to_vec();
+    let underlying_stream = reader.into_inner();
+    let chained_reader = io::Cursor::new(buffer).chain(underlying_stream);
 
-    let remote_command = match path_type {
-        RemotePathType::File => {
-            format!("{} {} | base64 -w 0", compressor_cmd, quoted_remote_path)
-        }
-        RemotePathType::Directory => {
-            format!(
-                "tar -cf - -C {} . | {} | base64 -w 0",
-                quoted_remote_path, compressor_cmd
-            )
-        }
-        RemotePathType::NotFound => return Err(anyhow!("远程路径未找到: {}", remote_path_str)),
-    };
-
-    let mut child = SshProcessBuilder::new(server, &remote_command).spawn_for_io()?;
-
-    let ssh_stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow!("无法获取 SSH 进程的 stdout"))?;
-    let b64_reader = base64::read::DecoderReader::new(ssh_stdout, &B64);
-
-    let decompressor: Box<dyn io::Read> = match algorithm {
-        CompressionAlgorithm::Gzip => Box::new(GzDecoder::new(b64_reader)),
-        CompressionAlgorithm::Zstd => Box::new(zstd::stream::Decoder::new(b64_reader)?),
+    let decompressor: Box<dyn Read> = match meta.compression {
+        CompressionAlgorithm::Gzip => Box::new(GzDecoder::new(chained_reader)),
+        CompressionAlgorithm::Zstd => Box::new(zstd::stream::Decoder::new(chained_reader)?),
     };
 
     let mut progress_reader = pb.wrap_read(decompressor);
 
-    match path_type {
+    match meta.path_type {
         RemotePathType::File => {
             if let Some(parent) = final_local_path.parent() {
                 fs::create_dir_all(parent).context("创建本地父目录失败")?;
@@ -281,7 +345,9 @@ pub fn download(server: &Server, remote_path_str: &str, local_path: &Path) -> Re
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("下载失败: {}", stderr.trim()));
+        if !stderr.is_empty() {
+            return Err(anyhow!("下载失败: {}", stderr.trim()));
+        }
     }
     Ok(())
 }
