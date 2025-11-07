@@ -1,4 +1,4 @@
-use crate::{ConfigManager, filezilla, ssh};
+use crate::{filezilla, ssh, ConfigManager};
 use anyhow::Result;
 use inquire::Select;
 use std::fmt;
@@ -11,7 +11,7 @@ pub enum ConnectMode {
 
 struct ServerSelectItem<'a> {
     name: &'a str,
-    server: &'a crate::Server,
+    server: &'a crate::config::Server,
 }
 
 impl<'a> fmt::Display for ServerSelectItem<'a> {
@@ -40,8 +40,14 @@ pub fn interactive_connect(config_manager: &ConfigManager, mode: ConnectMode) ->
         .map(|(name, server)| ServerSelectItem { name, server })
         .collect();
 
+    let terminal_height = crossterm::terminal::size()
+        .map(|(_, height)| height - 2)
+        .unwrap_or(15);
+    let page_size = (terminal_height as usize).saturating_sub(4).max(5);
+
     let selected = Select::new("请选择一个服务器进行连接:", options)
         .with_help_message("输入以筛选，回车键确认，ESC 取消")
+        .with_page_size(page_size)
         .prompt_skippable()?;
 
     if let Some(choice) = selected {

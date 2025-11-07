@@ -1,5 +1,5 @@
 use crate::{Config, ConfigManager};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use std::io::{self, Write};
 
 pub fn export_config(manager: &ConfigManager) -> Result<()> {
