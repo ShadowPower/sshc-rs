@@ -55,9 +55,26 @@ fn prepare_ssh_auth(mut cmd: Command, password: Option<String>) -> Result<Comman
         #[cfg(windows)]
         {
             use std::io::Write;
+            let mut escaped_pass = String::with_capacity(pass.len() * 2);
+            for c in pass.chars() {
+                match c {
+                    '%' => escaped_pass.push_str("%%"),
+                    '^' => escaped_pass.push_str("^^"),
+                    '&' => escaped_pass.push_str("^&"),
+                    '<' => escaped_pass.push_str("^<"),
+                    '>' => escaped_pass.push_str("^>"),
+                    '|' => escaped_pass.push_str("^|"),
+                    '@' => escaped_pass.push_str("^@"),
+                    '"' => escaped_pass.push_str("^\""),
+                    '(' => escaped_pass.push_str("^("),
+                    ')' => escaped_pass.push_str("^)"),
+                    '!' => escaped_pass.push_str("^!"), // 即使未开启延迟扩展，转义也是安全的
+                    _ => escaped_pass.push(c),
+                }
+            }
             let script = format!(
                 "@echo off\r\necho {}\r\n(goto) 2>nul & del \"%~f0\"\r\n",
-                pass
+                escaped_pass
             );
             askpass_file.write_all(script.as_bytes())?;
         }
@@ -66,7 +83,10 @@ fn prepare_ssh_auth(mut cmd: Command, password: Option<String>) -> Result<Comman
             use std::fs;
             use std::io::Write;
             use std::os::unix::fs::PermissionsExt;
-            let script = format!("#!/bin/sh\necho \"{}\"\nrm -- \"$0\"\n", pass);
+            let script = format!(
+                "#!/bin/sh\ncat <<'SSHC_PASSWORD_EOF'\n{}\nSSHC_PASSWORD_EOF\nrm -- \"$0\"\n",
+                pass
+            );
             askpass_file.write_all(script.as_bytes())?;
             let mut perms = fs::metadata(askpass_file.path())?.permissions();
             perms.set_mode(0o700);
