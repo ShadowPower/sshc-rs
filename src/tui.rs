@@ -22,8 +22,14 @@ impl<'a> fmt::Display for ServerSelectItem<'a> {
             .as_deref()
             .filter(|s| !s.is_empty())
             .unwrap_or(self.name);
+
+        let group_tag = match &self.server.group {
+            Some(g) if !g.is_empty() => format!("[{}] ", g),
+            _ => String::new(),
+        };
+
         let connection_info = format!("{}@{}", self.server.user, self.server.host);
-        write!(f, "{} ({}) - {}", display_name, self.name, connection_info)
+        write!(f, "{}{} ({}) - {}", group_tag, display_name, self.name, connection_info)
     }
 }
 
@@ -34,11 +40,30 @@ pub fn interactive_connect(config_manager: &ConfigManager, mode: ConnectMode) ->
         return Ok(());
     }
 
-    let options: Vec<ServerSelectItem> = config
+    // 排序逻辑：先按分组顺序，再按名称
+    let mut options: Vec<ServerSelectItem> = config
         .servers
         .iter()
         .map(|(name, server)| ServerSelectItem { name, server })
         .collect();
+
+    options.sort_by(|a, b| {
+        let group_idx_a = a.server.group.as_ref()
+            .and_then(|g| config.groups.iter().position(|x| x == g))
+            .unwrap_or(usize::MAX);
+        let group_idx_b = b.server.group.as_ref()
+            .and_then(|g| config.groups.iter().position(|x| x == g))
+            .unwrap_or(usize::MAX);
+
+        if group_idx_a != group_idx_b {
+            return group_idx_a.cmp(&group_idx_b);
+        }
+
+        // 如果分组相同（或都未分组），按显示名称排序
+        let name_a = a.server.display_name.as_deref().unwrap_or(a.name);
+        let name_b = b.server.display_name.as_deref().unwrap_or(b.name);
+        name_a.cmp(name_b)
+    });
 
     let terminal_height = crossterm::terminal::size()
         .map(|(_, height)| height - 2)

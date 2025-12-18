@@ -35,6 +35,30 @@ pub enum ConfigCommands {
         /// 要删除的服务器名称
         name: String,
     },
+    /// 管理分组信息
+    #[command(subcommand)]
+    Group(GroupCommands),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum GroupCommands {
+    /// 列出所有分组
+    #[command(alias = "ls")]
+    List,
+    /// 添加一个新分组
+    Add {
+        name: String,
+    },
+    /// 重命名一个分组
+    Rename {
+        old_name: String,
+        new_name: String,
+    },
+    /// 删除一个分组 (组内服务器将变为未分组)
+    #[command(alias = "rm")]
+    Remove {
+        name: String,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -47,6 +71,8 @@ pub struct ServerArgs {
     port: Option<u16>,
     #[arg(short = 'n', long, help = "显示名称 (可选)")]
     display_name: Option<String>,
+    #[arg(short = 'g', long, help = "所属分组 (可选)")]
+    group: Option<String>,
     #[arg(short = 'i', long = "key", help = "私钥文件路径")]
     keyfile: Option<String>,
     #[arg(long, help = "直接提供密码 (不安全)")]
@@ -124,6 +150,72 @@ pub fn handle_config_command(cmd: ConfigCommands, manager: &ConfigManager) -> Re
         ConfigCommands::Add { name, server_args } => add_server(name, server_args, manager)?,
         ConfigCommands::Edit { name, server_args } => edit_server(name, server_args, manager)?,
         ConfigCommands::Remove { name } => remove_server(name, manager)?,
+        ConfigCommands::Group(group_cmd) => handle_group_command(group_cmd, manager)?,
+    }
+    Ok(())
+}
+
+fn handle_group_command(cmd: GroupCommands, manager: &ConfigManager) -> Result<()> {
+    let mut config = manager.read()?;
+    match cmd {
+        GroupCommands::List => {
+            if config.groups.is_empty() {
+                println!("当前没有定义任何分组。");
+            } else {
+                println!("分组列表:");
+                for (i, g) in config.groups.iter().enumerate() {
+                    println!("  {}. {}", i + 1, g);
+                }
+            }
+        }
+        GroupCommands::Add { name } => {
+            if config.groups.contains(&name) {
+                return Err(anyhow!("分组 '{}' 已存在", name));
+            }
+            config.groups.push(name.clone());
+            manager.write(&config)?;
+            println!("已添加分组 '{}'", name);
+        }
+        GroupCommands::Rename { old_name, new_name } => {
+            if !config.groups.contains(&old_name) {
+                return Err(anyhow!("未找到分组 '{}'", old_name));
+            }
+            if config.groups.contains(&new_name) {
+                return Err(anyhow!("分组 '{}' 已存在", new_name));
+            }
+            // 1. 更新分组列表
+            if let Some(pos) = config.groups.iter().position(|g| g == &old_name) {
+                config.groups[pos] = new_name.clone();
+            }
+            // 2. 更新所有属于该分组的服务器
+            let mut count = 0;
+            for server in config.servers.values_mut() {
+                if server.group.as_deref() == Some(&old_name) {
+                    server.group = Some(new_name.clone());
+                    count += 1;
+                }
+            }
+            manager.write(&config)?;
+            println!("已将分组 '{}' 重命名为 '{}'，更新了 {} 个服务器。", old_name, new_name, count);
+        }
+        GroupCommands::Remove { name } => {
+            if let Some(pos) = config.groups.iter().position(|g| g == &name) {
+                config.groups.remove(pos);
+                // 移除后，服务器自动变为未分组（group 字段保留为 String，但不在 groups 列表中时逻辑上视为未分组，
+                // 或者我们可以显式地将它们置为 None。为了清晰起见，显式置为 None 更好）
+                let mut count = 0;
+                for server in config.servers.values_mut() {
+                    if server.group.as_deref() == Some(&name) {
+                        server.group = None;
+                        count += 1;
+                    }
+                }
+                manager.write(&config)?;
+                println!("已删除分组 '{}'，{} 个服务器被移至未分组。", name, count);
+            } else {
+                return Err(anyhow!("未找到分组 '{}'", name));
+            }
+        }
     }
     Ok(())
 }
@@ -150,6 +242,10 @@ fn show_server(name: String, manager: &ConfigManager) -> Result<()> {
             .unwrap_or_else(|| "22".to_string())
     );
     println!(
+        "  Group          : {}",
+        server.group.as_deref().unwrap_or("无")
+    );
+    println!(
         "  Keyfile        : {}",
         server.keyfile.as_deref().unwrap_or("N/A")
     );
@@ -169,6 +265,7 @@ fn show_server(name: String, manager: &ConfigManager) -> Result<()> {
         "  Prefix Command : {}",
         server.ssh_prefix_command.as_deref().unwrap_or("N/A")
     );
+    // ... forward rules print ...
     if !server.port_forwards.is_empty() {
         println!("  Port Forwards  :");
         for pf in &server.port_forwards {
@@ -225,7 +322,7 @@ fn add_server(name: String, args: ServerArgs, manager: &ConfigManager) -> Result
         user,
         ..Default::default()
     };
-    apply_args_to_server(&mut server, args)?;
+    apply_args_to_server(&mut server, args, &mut config.groups)?;
 
     config.servers.insert(name.clone(), server);
     manager.write(&config).with_context(|| "写入配置失败")?;
@@ -235,19 +332,27 @@ fn add_server(name: String, args: ServerArgs, manager: &ConfigManager) -> Result
 
 fn edit_server(name: String, args: ServerArgs, manager: &ConfigManager) -> Result<()> {
     let mut config = manager.read()?;
+    // 我们需要在这里先克隆 groups 以便传递给 apply，然后再还回去或者直接操作 config
+    // 这里的 borrow checker 会有点麻烦，所以我们在 apply 中只修改 groups 如果需要
+
+    // 逻辑调整：先获取 server 可变引用，apply 时传递 groups 可变引用
+    // 但是 config.servers.get_mut 会借用 config
+    // 简单起见，我们先拿出 groups 的副本进行检查（如果需要自动创建分组），但 CLI 通常不自动创建分组除非显式指令？
+    // 为了用户体验，如果指定了不存在的分组，自动创建它比较好。
+
     let server = config
         .servers
         .get_mut(&name)
         .ok_or_else(|| anyhow!("未找到要编辑的服务器: {}", name))?;
 
-    apply_args_to_server(server, args)?;
+    apply_args_to_server(server, args, &mut config.groups)?;
 
     manager.write(&config).with_context(|| "写入配置失败")?;
     println!("成功编辑服务器 '{}'。", name);
     Ok(())
 }
 
-fn apply_args_to_server(server: &mut Server, args: ServerArgs) -> Result<()> {
+fn apply_args_to_server(server: &mut Server, args: ServerArgs, groups: &mut Vec<String>) -> Result<()> {
     if let Some(host) = args.host {
         server.host = host;
     }
@@ -259,6 +364,18 @@ fn apply_args_to_server(server: &mut Server, args: ServerArgs) -> Result<()> {
     }
     if let Some(dn) = args.display_name {
         server.display_name = Some(dn);
+    }
+    if let Some(g) = args.group {
+        if !g.is_empty() {
+            server.group = Some(g.clone());
+            // 如果分组不存在，自动创建
+            if !groups.contains(&g) {
+                println!("提示: 自动创建新分组 '{}'", g);
+                groups.push(g);
+            }
+        } else {
+            server.group = None;
+        }
     }
     if let Some(kf) = args.keyfile {
         server.keyfile = Some(kf);

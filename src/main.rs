@@ -45,7 +45,7 @@ enum Commands {
     #[command(alias = "f")]
     Filezilla { name: Option<String> },
 
-    /// 以人类可读格式列出所有服务器
+    /// 以人类可读格式列出所有服务器（按分组）
     #[command(alias = "l")]
     List,
 
@@ -97,33 +97,69 @@ enum Commands {
 fn list_servers(config: &Config) -> Result<()> {
     if config.servers.is_empty() {
         println!("未配置服务器。请使用 'sshc web' 或 'sshc config add' 添加。");
-    } else {
-        println!("可用的服务器:");
+        return Ok(());
+    }
+
+    println!("可用的服务器:\n");
+
+    let mut displayed_servers = std::collections::HashSet::new();
+
+    // 1. 先按定义的顺序显示分组
+    for group in &config.groups {
+        println!("📂 分组: {}", group);
+        let mut found = false;
         for (name, server) in &config.servers {
-            let display = server
-                .display_name
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .unwrap_or(name);
-            println!("  - {} ({})", display, name);
-            if server.user.is_empty() || server.host.is_empty() {
-                println!("    └─ (配置不完整)");
-            } else {
-                println!(
-                    "    └─ {}@{}:{}",
-                    server.user,
-                    server.host,
-                    server.port.unwrap_or(22)
-                );
-            }
-            if let Some(prefix) = &server.ssh_prefix_command {
-                if !prefix.is_empty() {
-                    println!("      ├─ Prefix: {}", prefix);
-                }
+            if server.group.as_deref() == Some(group) {
+                print_server_item(name, server);
+                displayed_servers.insert(name);
+                found = true;
             }
         }
+        if !found {
+            println!("  (空)");
+        }
+        println!();
     }
+
+    // 2. 显示未分组或分组名不在 groups 列表中的服务器
+    let mut ungrouped_found = false;
+    for (name, server) in &config.servers {
+        if !displayed_servers.contains(name) {
+            if !ungrouped_found {
+                println!("📂 未分组:");
+                ungrouped_found = true;
+            }
+            print_server_item(name, server);
+        }
+    }
+
+    if !ungrouped_found && config.groups.is_empty() && !config.servers.is_empty() {
+        // 如果完全没有分组配置，也作为普通列表显示
+        for (name, server) in &config.servers {
+            print_server_item(name, server);
+        }
+    }
+
     Ok(())
+}
+
+fn print_server_item(name: &str, server: &config::Server) {
+    let display = server
+        .display_name
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(name);
+    println!("  - {} ({})", display, name);
+    if server.user.is_empty() || server.host.is_empty() {
+        println!("    └─ (配置不完整)");
+    } else {
+        println!(
+            "    └─ {}@{}:{}",
+            server.user,
+            server.host,
+            server.port.unwrap_or(22)
+        );
+    }
 }
 
 fn connect_by_name(config: &Config, name: &str, use_filezilla: bool) -> Result<()> {
@@ -179,9 +215,9 @@ async fn main() -> Result<()> {
             transfer::import_config(&config_manager, &data, force)?
         }
         Some(Commands::Upload {
-            local_path,
-            destination,
-        }) => {
+                 local_path,
+                 destination,
+             }) => {
             let (name, remote_path) = parse_remote_arg(&destination)?;
             let config = config_manager.read()?;
             let server = config

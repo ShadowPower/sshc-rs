@@ -30,6 +30,9 @@ mod serde_helpers {
 pub struct Config {
     #[serde(default)]
     pub servers: BTreeMap<String, Server>,
+    /// 分组列表，用于定义分组的显示顺序
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -41,6 +44,8 @@ pub struct Server {
     pub user: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "serde_helpers::empty_string_as_none")]
     pub port: Option<u16>,
