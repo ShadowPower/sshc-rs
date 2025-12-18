@@ -32,7 +32,12 @@
                 --text-on-accent: #ffffff;
                 --text-disabled: #8a8a8a;
                 --text-danger: #d13438;
+                --text-success: #107c10;
+                --text-warning: #797721;
                 --drop-target: rgba(0, 120, 212, 0.1);
+                --bg-info-tip: #f0f6ff;
+                --border-info-tip: #cce4ff;
+                --text-info-tip: #005a9e;
             }
         }
 
@@ -56,7 +61,12 @@
                 --text-on-accent: #ffffff;
                 --text-disabled: #707070;
                 --text-danger: #f17074;
+                --text-success: #55a362;
+                --text-warning: #d9d568;
                 --drop-target: rgba(0, 149, 255, 0.15);
+                --bg-info-tip: #222a33;
+                --border-info-tip: #2b3c4f;
+                --text-info-tip: #4fa1ff;
             }
         }
 
@@ -402,21 +412,64 @@
             color: white;
         }
 
-        /* Port Forward Styles (Same as before) */
+        /* --- Port Forward Styles --- */
         .pf-list { display: flex; flex-direction: column; gap: 16px; }
-        .pf-item { border: 1px solid var(--stroke-color-default); border-radius: var(--control-corner-radius); }
+        .pf-item {
+            border: 1px solid var(--stroke-color-default);
+            border-radius: var(--control-corner-radius);
+            transition: border-color 0.2s;
+        }
+        .pf-item:focus-within {
+            border-color: var(--stroke-color-focus);
+        }
         .pf-item-header { display: flex; justify-content: space-between; align-items: center; padding: 8px; background-color: var(--fill-color-layer-2); border-bottom: 1px solid var(--stroke-color-default); }
         .pf-type-selector { display: flex; background-color: var(--fill-color-control); border: 1px solid var(--stroke-color-control); border-radius: var(--control-corner-radius); overflow: hidden; }
-        .pf-type-selector button { background-color: transparent; border: none; padding: 4px 12px; cursor: pointer; border-left: 1px solid var(--stroke-color-control); color: var(--text-secondary); }
+        .pf-type-selector button { background-color: transparent; border: none; padding: 4px 12px; cursor: pointer; border-left: 1px solid var(--stroke-color-control); color: var(--text-secondary); font-size: 13px; }
         .pf-type-selector button:first-child { border-left: none; }
         .pf-type-selector button.active { background-color: var(--fill-color-accent); color: var(--text-on-accent); }
+
         .pf-item-body { padding: 12px; }
-        .pf-config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px 12px; align-items: center; }
-        .pf-explanation { font-size: 12px; color: var(--text-secondary); margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--stroke-color-default); }
+        .pf-config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px 12px; align-items: start; }
+
+        .pf-dynamic-desc {
+            margin-top: 10px;
+            padding: 8px 10px;
+            background-color: var(--bg-info-tip);
+            border: 1px solid var(--border-info-tip);
+            border-radius: 4px;
+            color: var(--text-info-tip);
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        .pf-dynamic-desc strong {
+            font-weight: 600;
+        }
+
+        .pf-intro-box {
+            background-color: var(--fill-color-layer-2);
+            padding: 12px;
+            border-radius: var(--layer-corner-radius);
+            margin-bottom: 16px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            border-left: 4px solid var(--fill-color-accent);
+        }
+        .pf-intro-box h4 { margin: 0 0 6px 0; color: var(--text-primary); }
+        .pf-intro-box ul { margin: 0; padding-left: 20px; }
+        .pf-intro-box li { margin-bottom: 4px; }
+
         .form-view[data-mode="view"] .pf-item { border-color: transparent; }
         .form-view[data-mode="view"] .pf-item-header { background-color: transparent; padding-left: 0; }
-        .form-view[data-mode="view"] .pf-item-body { display: none; }
-        .pf-view-summary { font-family: var(--font-monospace); font-size: 13px; color: var(--text-primary); }
+        .form-view[data-mode="view"] .pf-item-body { padding-top: 0; }
+        .pf-view-summary { font-family: var(--font-monospace); font-size: 13px; color: var(--text-primary); display: flex; align-items: center; gap: 8px;}
+        .pf-tag {
+            font-size: 11px; padding: 2px 6px; border-radius: 4px; font-weight: 600;
+            text-transform: uppercase; border: 1px solid transparent;
+        }
+        .pf-tag.local { background-color: rgba(16, 124, 16, 0.1); color: var(--text-success); border-color: rgba(16, 124, 16, 0.2); }
+        .pf-tag.remote { background-color: rgba(0, 120, 212, 0.1); color: var(--text-info-tip); border-color: rgba(0, 120, 212, 0.2); }
+        .pf-tag.dynamic { background-color: rgba(121, 119, 33, 0.15); color: var(--text-warning); border-color: rgba(121, 119, 33, 0.2); }
+
     </style>
 </head>
 <body>
@@ -488,7 +541,7 @@
             }
         }
 
-        // --- Sidebar Rendering ---
+        // --- Sidebar Rendering (Groups Logic) ---
         function renderSidebar() {
             containerEl.innerHTML = '';
             const filter = searchInput.value.toLowerCase();
@@ -501,7 +554,6 @@
             // Distribute servers
             Object.keys(data.servers).forEach(key => {
                 const s = data.servers[key];
-                // Apply Search Filter
                 const searchMatch = key.toLowerCase().includes(filter) ||
                     (s.display_name || '').toLowerCase().includes(filter) ||
                     s.host.includes(filter);
@@ -515,7 +567,6 @@
                 }
             });
 
-            // Sort servers by display name within buckets
             const sortFn = (a, b) => (a.display_name || a.key).localeCompare(b.display_name || b.key, 'zh-CN');
 
             // Render Groups
@@ -532,7 +583,6 @@
         function renderGroup(name, servers, isUngrouped) {
             const groupDiv = document.createElement('div');
             groupDiv.className = 'group-container';
-            // Ungrouped is technically a "null" group for drag logic
             groupDiv.dataset.groupName = isUngrouped ? '' : name;
 
             const isCollapsed = collapsedGroups.includes(name);
@@ -545,19 +595,16 @@
                 header.ondragover = handleGroupDragOver;
                 header.ondrop = handleGroupDrop;
             }
-            // All headers are drop targets for servers
             header.addEventListener('dragover', handleServerDragOver);
             header.addEventListener('dragleave', handleServerDragLeave);
             header.addEventListener('drop', handleServerDrop);
 
-            // Context Menu for Header
             header.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
                 showContextMenu(e.clientX, e.clientY, isUngrouped ? 'ungrouped-header' : 'group-header', name);
             });
 
             header.onclick = (e) => {
-                // Ignore clicks if they were dragged
                 if (header.classList.contains('dragging')) return;
                 toggleGroupCollapse(name);
             };
@@ -591,7 +638,7 @@
                     if (currentServerName !== s.key) {
                         currentServerName = s.key;
                         currentMode = 'view';
-                        renderSidebar(); // refresh active state
+                        renderSidebar();
                         renderMainContent();
                     }
                 };
@@ -618,7 +665,7 @@
         }
 
         // --- Drag and Drop Logic ---
-        let dragSrcType = null; // 'group' or 'server'
+        let dragSrcType = null;
         let dragSrcData = null;
 
         function handleGroupDragStart(e) {
@@ -630,7 +677,7 @@
 
         function handleGroupDragOver(e) {
             if (dragSrcType !== 'group') return;
-            e.preventDefault(); // Allow drop
+            e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
         }
 
@@ -640,7 +687,6 @@
             const targetGroup = this.parentElement.dataset.groupName;
 
             if (dragSrcData !== targetGroup) {
-                // Reorder Groups
                 const oldIdx = data.groups.indexOf(dragSrcData);
                 const newIdx = data.groups.indexOf(targetGroup);
                 if (oldIdx > -1 && newIdx > -1) {
@@ -673,30 +719,25 @@
             e.preventDefault();
             this.classList.remove('drag-over-group');
 
-            // "Ungrouped" logic is stored as empty string in data attributes
             const targetGroupName = this.parentElement.dataset.groupName || '';
             const serverName = dragSrcData;
 
             if (data.servers[serverName] && data.servers[serverName].group !== targetGroupName) {
-                // Only update if changed (Ungrouped vs null check needed?)
                 const currentGroup = data.servers[serverName].group || '';
                 if (currentGroup !== targetGroupName) {
-                    // Update server group
                     const server = data.servers[serverName];
                     server.group = targetGroupName === '' ? null : targetGroupName;
-
-                    // Save to backend
                     try {
                         await api('/api/server', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
                             body: JSON.stringify({
                                 name: serverName,
-                                original_name: serverName, // no rename
+                                original_name: serverName,
                                 ...server
                             })
                         });
-                        loadData(); // Reload to refresh view
+                        loadData();
                     } catch (err) {
                         console.error(err);
                     }
@@ -704,7 +745,6 @@
             }
         }
 
-        // --- Group Management API ---
         async function saveGroups(newGroups) {
             try {
                 await api('/api/groups', {
@@ -731,16 +771,9 @@
             const newName = prompt("请输入新分组名称:", oldName);
             if (newName && newName !== oldName) {
                 if (data.groups.includes(newName)) return alert("分组已存在");
-
-                // Client-side optimistic update logic for simplicity,
-                // but really should iterate servers.
-                // Step 1: Update Group List
                 const idx = data.groups.indexOf(oldName);
                 if (idx !== -1) data.groups[idx] = newName;
                 await saveGroups(data.groups);
-
-                // Step 2: Update Servers
-                // This is suboptimal (many requests), but works for now without bulk API
                 const promises = [];
                 for (const [key, server] of Object.entries(data.servers)) {
                     if (server.group === oldName) {
@@ -759,14 +792,11 @@
 
         async function deleteGroup(name) {
             if (confirm(`删除分组 "${name}"? 组内服务器将变为未分组。`)) {
-                // Step 1: Remove from group list
                 const idx = data.groups.indexOf(name);
                 if (idx > -1) {
                     data.groups.splice(idx, 1);
                     await saveGroups(data.groups);
                 }
-
-                // Step 2: Update Servers
                 const promises = [];
                 for (const [key, server] of Object.entries(data.servers)) {
                     if (server.group === name) {
@@ -783,7 +813,6 @@
             }
         }
 
-
         // --- Context Menu ---
         function showContextMenu(x, y, type, target) {
             contextMenuEl.innerHTML = '';
@@ -791,17 +820,13 @@
             contextMenuEl.dataset.type = type;
 
             const items = [];
-
             if (type === 'server-item') {
                 items.push({ text: '复制连接命令', action: 'copy' });
                 items.push({ text: '删除连接', action: 'delete-server', danger: true });
             } else if (type === 'group-header') {
                 items.push({ text: '重命名分组', action: 'rename-group' });
                 items.push({ text: '删除分组', action: 'delete-group', danger: true });
-            } else if (type === 'ungrouped-header') {
-                // Nothing special for ungrouped header yet
-                return;
-            }
+            } else return;
 
             items.forEach(item => {
                 const li = document.createElement('li');
@@ -840,7 +865,7 @@
             contextMenuEl.style.display = 'none';
         });
 
-        // --- Main Content & Form (Similar to previous, updated for Groups) ---
+        // --- Main Content ---
         function renderMainContent() {
             let title = '', actionsHTML = '', contentHTML = '';
             const isNew = currentMode === 'edit' && !data.servers[currentServerName];
@@ -864,6 +889,11 @@
             contentTitleEl.textContent = title;
             contentActionsEl.innerHTML = actionsHTML;
             contentCardEl.innerHTML = contentHTML;
+
+            // Trigger explanations update for all items in edit mode
+            if (currentMode === 'edit') {
+                document.querySelectorAll('.pf-item').forEach(updatePFExplanation);
+            }
         }
 
         function createFormHTML(name, server, mode) {
@@ -871,7 +901,6 @@
             const isViewMode = mode === 'view';
             const pf = server.port_forwards || [];
 
-            // Group Options
             let groupOptions = `<option value="">(未分组)</option>`;
             data.groups.forEach(g => {
                 const selected = (server.group === g) ? 'selected' : '';
@@ -911,10 +940,19 @@
                                <label for="ssh_prefix_command">前缀命令</label>
                                <input type="text" id="ssh_prefix_command" value="${server.ssh_prefix_command || ''}" ${isViewMode ? 'readonly' : ''}>
 
-                               <label>规则</label>
+                               <label>转发规则</label>
                                <div class="full-width">
+                                   ${!isViewMode ? `
+                                   <div class="pf-intro-box">
+                                        <h4>端口转发说明</h4>
+                                        <ul>
+                                            <li><strong>本地 (Local)</strong>: 将本机的端口映射到远程。用于访问服务器内网的数据库、Web后台等。</li>
+                                            <li><strong>远程 (Remote)</strong>: 将服务器的端口映射回本机。用于让服务器访问你电脑上的服务。</li>
+                                            <li><strong>动态 (Dynamic)</strong>: 在本机建立 SOCKS5 代理。用于让浏览器通过 SSH 服务器上网。</li>
+                                        </ul>
+                                   </div>` : ''}
                                    <div id="pf-list" class="pf-list">${pf.map((r, i) => createPFItem(r, i, mode)).join('')}</div>
-                                   ${mode === 'edit' ? '<button type="button" id="add-pf-btn" class="button" style="margin-top:12px">添加转发规则</button>' : ''}
+                                   ${!isViewMode ? '<button type="button" id="add-pf-btn" class="button" style="margin-top:12px">添加转发规则</button>' : ''}
                                </div>
                              </div>
                         </fieldset>
@@ -923,44 +961,117 @@
             `;
         }
 
-        // --- Helper for Port Forwards (Simplified from previous) ---
+        // --- Port Forward Logic ---
         function createPFItem(pf, index, mode) {
+            // View Mode Summary
             if (mode === 'view') {
-                let s = '';
-                if(pf.type==='local') s=`Local: ${pf.local_port||0} -> ${pf.remote_host}:${pf.remote_port||0}`;
-                else if(pf.type==='remote') s=`Remote: ${pf.remote_port||0} -> ${pf.local_host}:${pf.local_port||0}`;
-                else s=`Dynamic: ${pf.local_port||0}`;
-                return `<div class="pf-item"><div class="pf-item-header"><span class="pf-view-summary">${s}</span></div></div>`;
+                let tag = '', content = '';
+                if(pf.type==='local') {
+                    tag = '<span class="pf-tag local">Local</span>';
+                    content = `本机 ${pf.local_port || '?'} ➔ ${pf.remote_host}:${pf.remote_port || '?'}`;
+                } else if(pf.type==='remote') {
+                    tag = '<span class="pf-tag remote">Remote</span>';
+                    content = `远程 ${pf.remote_port || '?'} ➔ 本机 ${pf.local_host}:${pf.local_port || '?'}`;
+                } else {
+                    tag = '<span class="pf-tag dynamic">Dynamic</span>';
+                    content = `SOCKS5 代理 @ 本机 ${pf.local_port || '?'}`;
+                }
+                return `<div class="pf-item"><div class="pf-item-header"><div class="pf-view-summary">${tag} ${content}</div></div></div>`;
             }
-            // Edit Mode HTML ... (omitted for brevity, assume similar structure to previous but with updated field access logic)
-            // Reusing the structure from previous code for Edit mode logic
-            const types = {local: '本地', remote: '远程', dynamic: '动态'};
+
+            // Edit Mode
+            const types = {local: '本地 (Local)', remote: '远程 (Remote)', dynamic: '动态 (Dynamic)'};
+
+            // Build Inputs based on type
+            let inputsHtml = '';
+            if (pf.type === 'local') {
+                inputsHtml = `
+                    <div><label>本机端口 (侦听)</label><input type="number" data-key="local_port" value="${pf.local_port || ''}" placeholder="例如: 8080"></div>
+                    <div><label>目标主机 (相对于服务器)</label><input type="text" data-key="remote_host" value="${pf.remote_host || 'localhost'}" placeholder="例如: localhost 或 192.168.1.5"></div>
+                    <div><label>目标端口</label><input type="number" data-key="remote_port" value="${pf.remote_port || ''}" placeholder="例如: 80"></div>
+                `;
+            } else if (pf.type === 'remote') {
+                inputsHtml = `
+                    <div><label>远程端口 (侦听)</label><input type="number" data-key="remote_port" value="${pf.remote_port || ''}" placeholder="例如: 8080"></div>
+                    <div><label>目标主机 (相对于本机)</label><input type="text" data-key="local_host" value="${pf.local_host || 'localhost'}" placeholder="例如: localhost"></div>
+                    <div><label>目标端口</label><input type="number" data-key="local_port" value="${pf.local_port || ''}" placeholder="例如: 3000"></div>
+                `;
+            } else if (pf.type === 'dynamic') {
+                inputsHtml = `
+                    <div><label>本机 SOCKS 端口</label><input type="number" data-key="local_port" value="${pf.local_port || ''}" placeholder="例如: 1080"></div>
+                `;
+            }
+
             return `
                 <div class="pf-item">
                     <div class="pf-item-header">
-                        <div class="pf-type-selector">${Object.keys(types).map(t => `<button type="button" data-type="${t}" class="${pf.type === t ? 'active' : ''}">${types[t]}</button>`).join('')}</div>
+                        <div class="pf-type-selector">
+                            ${Object.keys(types).map(t => `<button type="button" data-type="${t}" class="${pf.type === t ? 'active' : ''}">${types[t]}</button>`).join('')}
+                        </div>
                         <button type="button" class="button danger" data-action="del-pf">删除</button>
                     </div>
                     <div class="pf-item-body">
-                         <div class="pf-config-grid">
-                            ${pf.type === 'local' ? `<div><label>本地</label><input type="number" data-key="local_port" value="${pf.local_port || ''}"></div><div><label>远程主机</label><input type="text" data-key="remote_host" value="${pf.remote_host || 'localhost'}"></div><div><label>远程端口</label><input type="number" data-key="remote_port" value="${pf.remote_port || ''}"></div>` : ''}
-                            ${pf.type === 'remote' ? `<div><label>远程</label><input type="number" data-key="remote_port" value="${pf.remote_port || ''}"></div><div><label>本地主机</label><input type="text" data-key="local_host" value="${pf.local_host || 'localhost'}"></div><div><label>本地端口</label><input type="number" data-key="local_port" value="${pf.local_port || ''}"></div>` : ''}
-                            ${pf.type === 'dynamic' ? `<div><label>SOCKS端口</label><input type="number" data-key="local_port" value="${pf.local_port || ''}"></div>` : ''}
-                        </div>
+                         <div class="pf-config-grid">${inputsHtml}</div>
+                         <div class="pf-dynamic-desc">...</div>
                     </div>
                 </div>`;
         }
 
-        // --- Form Interaction ---
+        // --- Dynamic Explanation Logic ---
+        function updatePFExplanation(itemEl) {
+            const descEl = itemEl.querySelector('.pf-dynamic-desc');
+            if (!descEl) return;
+
+            const typeBtn = itemEl.querySelector('.pf-type-selector .active');
+            if (!typeBtn) return;
+            const type = typeBtn.dataset.type;
+
+            const getVal = (key) => {
+                const input = itemEl.querySelector(`input[data-key="${key}"]`);
+                return input ? input.value : '';
+            }
+
+            let text = '';
+            if (type === 'local') {
+                const lp = getVal('local_port') || '[本机端口]';
+                const rh = getVal('remote_host') || 'localhost';
+                const rp = getVal('remote_port') || '[目标端口]';
+                text = `<strong>效果：</strong>当您访问自己电脑的 <code>localhost:${lp}</code> 时，流量会被加密传输到 SSH 服务器，然后由服务器转发到 <code>${rh}:${rp}</code>。<br><strong>场景：</strong>访问服务器上的 Web 管理后台、内网数据库等。`;
+            } else if (type === 'remote') {
+                const rp = getVal('remote_port') || '[远程端口]';
+                const lh = getVal('local_host') || 'localhost';
+                const lp = getVal('local_port') || '[本机端口]';
+                text = `<strong>效果：</strong>当任何人访问 SSH 服务器的 <code>localhost:${rp}</code> 时，流量会被转发回您的电脑，并连接到 <code>${lh}:${lp}</code>。<br><strong>场景：</strong>将您电脑上正在开发的 Web 服务展示给服务器端的人看。`;
+            } else if (type === 'dynamic') {
+                const lp = getVal('local_port') || '[端口]';
+                text = `<strong>效果：</strong>在您电脑的 <code>${lp}</code> 端口开启一个 SOCKS5 代理。<br><strong>场景：</strong>配合浏览器插件或支持 SOCKS 的软件，让所有网络流量都通过 SSH 服务器发出（访问内网资源）。`;
+            }
+            descEl.innerHTML = text;
+        }
+
+        // --- Interaction Handlers ---
         contentCardEl.addEventListener('click', (e) => {
             if (e.target.id === 'add-pf-btn') {
-                document.getElementById('pf-list').insertAdjacentHTML('beforeend', createPFItem({type: 'local'}, 0, 'edit'));
+                const el = htmlToElement(createPFItem({type: 'local'}, 0, 'edit'));
+                document.getElementById('pf-list').appendChild(el);
+                updatePFExplanation(el);
             } else if (e.target.dataset.action === 'del-pf') {
                 e.target.closest('.pf-item').remove();
             } else if (e.target.parentElement.classList.contains('pf-type-selector') && e.target.tagName === 'BUTTON') {
-                // Switch Type
                 const item = e.target.closest('.pf-item');
-                item.outerHTML = createPFItem({type: e.target.dataset.type}, 0, 'edit');
+                const newType = e.target.dataset.type;
+                const newItemHtml = createPFItem({type: newType}, 0, 'edit');
+                const newItem = htmlToElement(newItemHtml);
+                item.replaceWith(newItem);
+                updatePFExplanation(newItem);
+            }
+        });
+
+        // Listen for inputs to update explanation
+        contentCardEl.addEventListener('input', (e) => {
+            if (e.target.tagName === 'INPUT' && e.target.dataset.key) {
+                const item = e.target.closest('.pf-item');
+                if (item) updatePFExplanation(item);
             }
         });
 
@@ -1020,12 +1131,20 @@
             loadData();
         }
 
+        // Helper to create DOM from string
+        function htmlToElement(html) {
+            const template = document.createElement('template');
+            html = html.trim();
+            template.innerHTML = html;
+            return template.content.firstChild;
+        }
+
         // --- Init ---
         addGroupBtn.onclick = createGroup;
         addNewBtn.onclick = () => {
             currentServerName = `new-server-${Date.now()}`;
             currentMode = 'edit';
-            renderSidebar(); // clear selection visual
+            renderSidebar();
             renderMainContent();
         };
         searchInput.oninput = renderSidebar;
