@@ -46,19 +46,12 @@ pub enum GroupCommands {
     #[command(alias = "ls")]
     List,
     /// 添加一个新分组
-    Add {
-        name: String,
-    },
+    Add { name: String },
     /// 重命名一个分组
-    Rename {
-        old_name: String,
-        new_name: String,
-    },
+    Rename { old_name: String, new_name: String },
     /// 删除一个分组 (组内服务器将变为未分组)
     #[command(alias = "rm")]
-    Remove {
-        name: String,
-    },
+    Remove { name: String },
 }
 
 #[derive(Args, Debug)]
@@ -196,7 +189,10 @@ fn handle_group_command(cmd: GroupCommands, manager: &ConfigManager) -> Result<(
                 }
             }
             manager.write(&config)?;
-            println!("已将分组 '{}' 重命名为 '{}'，更新了 {} 个服务器。", old_name, new_name, count);
+            println!(
+                "已将分组 '{}' 重命名为 '{}'，更新了 {} 个服务器。",
+                old_name, new_name, count
+            );
         }
         GroupCommands::Remove { name } => {
             if let Some(pos) = config.groups.iter().position(|g| g == &name) {
@@ -352,7 +348,11 @@ fn edit_server(name: String, args: ServerArgs, manager: &ConfigManager) -> Resul
     Ok(())
 }
 
-fn apply_args_to_server(server: &mut Server, args: ServerArgs, groups: &mut Vec<String>) -> Result<()> {
+fn apply_args_to_server(
+    server: &mut Server,
+    args: ServerArgs,
+    groups: &mut Vec<String>,
+) -> Result<()> {
     if let Some(host) = args.host {
         server.host = host;
     }

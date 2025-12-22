@@ -215,9 +215,9 @@ async fn main() -> Result<()> {
             transfer::import_config(&config_manager, &data, force)?
         }
         Some(Commands::Upload {
-                 local_path,
-                 destination,
-             }) => {
+            local_path,
+            destination,
+        }) => {
             let (name, remote_path) = parse_remote_arg(&destination)?;
             let config = config_manager.read()?;
             let server = config

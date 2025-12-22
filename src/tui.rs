@@ -29,7 +29,11 @@ impl<'a> fmt::Display for ServerSelectItem<'a> {
         };
 
         let connection_info = format!("{}@{}", self.server.user, self.server.host);
-        write!(f, "{}{} ({}) - {}", group_tag, display_name, self.name, connection_info)
+        write!(
+            f,
+            "{}{} ({}) - {}",
+            group_tag, display_name, self.name, connection_info
+        )
     }
 }
 
@@ -48,10 +52,16 @@ pub fn interactive_connect(config_manager: &ConfigManager, mode: ConnectMode) ->
         .collect();
 
     options.sort_by(|a, b| {
-        let group_idx_a = a.server.group.as_ref()
+        let group_idx_a = a
+            .server
+            .group
+            .as_ref()
             .and_then(|g| config.groups.iter().position(|x| x == g))
             .unwrap_or(usize::MAX);
-        let group_idx_b = b.server.group.as_ref()
+        let group_idx_b = b
+            .server
+            .group
+            .as_ref()
             .and_then(|g| config.groups.iter().position(|x| x == g))
             .unwrap_or(usize::MAX);
 

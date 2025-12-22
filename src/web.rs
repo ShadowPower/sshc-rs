@@ -99,7 +99,8 @@ async fn get_config(State(state): State<AppState>) -> Response {
             Json(ConfigResponse {
                 servers: api_servers,
                 groups: config.groups,
-            }).into_response()
+            })
+            .into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
