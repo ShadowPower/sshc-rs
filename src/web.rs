@@ -15,13 +15,20 @@ use log::warn;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
 };
 use tokio::net::TcpListener;
 
+fn format_url_host(host: IpAddr) -> String {
+    match host {
+        IpAddr::V6(v6) => format!("[{}]", v6),
+        IpAddr::V4(v4) => v4.to_string(),
+    }
+}
+
 // --- Web UI 后端 ---
-pub async fn run_web_ui() -> Result<()> {
+pub async fn run_web_ui(bind: IpAddr, port: Option<u16>, no_browser: bool) -> Result<()> {
     let config_manager = Arc::new(Mutex::new(ConfigManager::new()?));
     let app = Router::new()
         .route("/", get(serve_index))
@@ -30,23 +37,38 @@ pub async fn run_web_ui() -> Result<()> {
         .route("/api/server/{name}", delete(delete_server))
         .route("/api/groups", post(save_groups))
         .with_state(config_manager);
-    let port = portpicker::pick_unused_port().context("无法找到可用端口")?;
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let port = match port {
+        Some(p) => p,
+        None => portpicker::pick_unused_port().context("无法找到可用端口")?,
+    };
+    let addr = SocketAddr::from((bind, port));
     println!("正在启动 Web UI... 请在浏览器中打开以下任一地址:");
-    if let Ok(hostname) = hostname::get() {
-        if let Ok(hostname_str) = hostname.into_string() {
-            println!("  http://{}:{}", hostname_str, port);
+    if bind.is_unspecified() {
+        if let Ok(hostname) = hostname::get() {
+            if let Ok(hostname_str) = hostname.into_string() {
+                println!("  http://{}:{}", hostname_str, port);
+            }
         }
+        println!("  http://127.0.0.1:{}", port);
+    } else if bind.is_loopback() {
+        println!("  http://127.0.0.1:{}", port);
+    } else {
+        println!("  http://{}:{}", format_url_host(bind), port);
     }
-    println!("  http://127.0.0.1:{}", port);
     println!("\n按 CTRL+C 停止。");
-    let url = format!("http://127.0.0.1:{}", port);
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        if webbrowser::open(&url).is_err() {
-            warn!("无法自动打开浏览器");
-        }
-    });
+    if !no_browser {
+        let url = if bind.is_unspecified() || bind.is_loopback() {
+            format!("http://127.0.0.1:{}", port)
+        } else {
+            format!("http://{}:{}", format_url_host(bind), port)
+        };
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if webbrowser::open(&url).is_err() {
+                warn!("无法自动打开浏览器");
+            }
+        });
+    }
     let listener = TcpListener::bind(addr).await?;
     axum::serve(listener, app)
         .await
@@ -123,6 +145,12 @@ async fn save_server(
     State(state): State<AppState>,
     Json(payload): Json<SaveServerPayload>,
 ) -> Response {
+    if payload.name.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "连接名称不能为空").into_response();
+    }
+    if payload.server.host.trim().is_empty() || payload.server.user.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "主机和用户名为必填项").into_response();
+    }
     let guard = match state.lock() {
         Ok(guard) => guard,
         Err(p) => {

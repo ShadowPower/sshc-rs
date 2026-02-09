@@ -28,7 +28,11 @@ impl<'a> fmt::Display for ServerSelectItem<'a> {
             _ => String::new(),
         };
 
-        let connection_info = format!("{}@{}", self.server.user, self.server.host);
+        let connection_info = if self.server.user.is_empty() || self.server.host.is_empty() {
+            "配置不完整".to_string()
+        } else {
+            format!("{}@{}", self.server.user, self.server.host)
+        };
         write!(
             f,
             "{}{} ({}) - {}",

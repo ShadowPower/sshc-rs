@@ -225,6 +225,10 @@
             display: block;
         }
 
+        .server-list-item .server-info-sub.incomplete {
+            color: var(--text-warning);
+        }
+
         .server-list-item.active .server-info, .server-list-item.active .server-info-sub {
             color: var(--text-on-accent);
         }
@@ -626,11 +630,14 @@
                 li.draggable = true;
                 li.dataset.name = s.key;
                 li.ondragstart = handleServerDragStart;
+                const isIncomplete = !s.user || !s.host;
+                const infoSubText = isIncomplete ? '配置不完整' : `${s.user}@${s.host}`;
+                const infoSubClass = isIncomplete ? 'server-info-sub incomplete' : 'server-info-sub';
 
                 li.innerHTML = `
                     <span class="server-name">${s.display_name || s.key}</span>
                     <span class="server-info">(${s.key})</span>
-                    <span class="server-info-sub">${s.user}@${s.host}</span>
+                    <span class="${infoSubClass}">${infoSubText}</span>
                 `;
 
                 li.onclick = (e) => {
@@ -853,7 +860,7 @@
                     loadData();
                 }
             } else if (action === 'copy') {
-                navigator.clipboard.writeText(`sshc "${target}"`);
+                navigator.clipboard.writeText(`sshc c "${target}"`);
             } else if (action === 'rename-group') {
                 renameGroup(target);
             } else if (action === 'delete-group') {
@@ -1099,14 +1106,18 @@
             const form = document.getElementById('server-form');
             const newName = form.querySelector('#name').value.trim();
             if(!newName) return alert("名称必填");
+            const host = form.querySelector('#host').value.trim();
+            const user = form.querySelector('#user').value.trim();
+            if (!host) return alert("主机必填");
+            if (!user) return alert("用户名必填");
 
             const payload = {
                 name: newName,
                 original_name: currentServerName === newName ? null : (data.servers[currentServerName] ? currentServerName : null),
                 display_name: form.querySelector('#display_name').value.trim(),
                 group: form.querySelector('#group').value || null,
-                host: form.querySelector('#host').value.trim(),
-                user: form.querySelector('#user').value.trim(),
+                host,
+                user,
                 port: form.querySelector('#port').value,
                 keyfile: form.querySelector('#keyfile').value.trim(),
                 password: form.querySelector('#password').value,

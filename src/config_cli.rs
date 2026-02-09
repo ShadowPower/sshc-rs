@@ -89,6 +89,8 @@ pub struct ServerArgs {
     x11: bool,
     #[arg(short = 'x', long, help = "SSH 前缀命令 (例如: trzsz)")]
     prefix: Option<String>,
+    #[arg(long, help = "清空所有端口转发规则")]
+    clear_forwards: bool,
 }
 
 fn parse_local_forward(s: &str) -> Result<PortForward, String> {
@@ -390,6 +392,9 @@ fn apply_args_to_server(
     let mut all_forwards = args.local_forwards;
     all_forwards.extend(args.remote_forwards);
     all_forwards.extend(args.dynamic_forwards);
+    if args.clear_forwards {
+        server.port_forwards.clear();
+    }
     if !all_forwards.is_empty() {
         server.port_forwards = all_forwards;
     }

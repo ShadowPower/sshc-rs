@@ -51,7 +51,17 @@ enum Commands {
 
     /// 启动 Web UI 配置界面
     #[command(alias = "w")]
-    Web,
+    Web {
+        /// 绑定地址 (默认 127.0.0.1)
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: std::net::IpAddr,
+        /// 指定端口 (默认: 自动选择可用端口)
+        #[arg(long)]
+        port: Option<u16>,
+        /// 不自动打开浏览器
+        #[arg(long)]
+        no_browser: bool,
+    },
 
     /// [人类友好] 管理服务器配置
     #[command(subcommand, alias = "conf")]
@@ -207,7 +217,11 @@ async fn main() -> Result<()> {
             None => tui::interactive_connect(&config_manager, tui::ConnectMode::Filezilla)?,
         },
         Some(Commands::List) => list_servers(&config_manager.read()?)?,
-        Some(Commands::Web) => web::run_web_ui().await?,
+        Some(Commands::Web {
+            bind,
+            port,
+            no_browser,
+        }) => web::run_web_ui(bind, port, no_browser).await?,
         Some(Commands::Config(cmd)) => config_cli::handle_config_command(cmd, &config_manager)?,
         Some(Commands::Api(cmd)) => cli_api::handle_api_command(cmd, &config_manager)?,
         Some(Commands::Export) => transfer::export_config(&config_manager)?,

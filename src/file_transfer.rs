@@ -303,9 +303,11 @@ pub fn download(server: &Server, remote_path_str: &str, local_path: &Path) -> Re
         meta.path_type, meta.size, meta.compression
     );
 
-    let remote_base_name = Path::new(remote_path_str)
+    let trimmed_remote_path = remote_path_str.trim_end_matches(|c| c == '/' || c == '\\');
+    let remote_base_name = Path::new(trimmed_remote_path)
         .file_name()
         .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
         .unwrap_or("download");
 
     let mut final_local_path = PathBuf::from(local_path);
