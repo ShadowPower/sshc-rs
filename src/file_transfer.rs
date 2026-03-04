@@ -125,8 +125,57 @@ fn is_permission_denied_message(message: &str) -> bool {
         || message.contains("权限不足")
 }
 
+fn is_ignorable_bootstrap_stderr_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.contains("powershell.exe") {
+        return false;
+    }
+
+    lower.contains("command not found")
+        || lower.contains("not found")
+        || lower.contains("is not recognized")
+        || trimmed.contains("未找到")
+        || trimmed.contains("找不到")
+}
+
+fn is_ignorable_bootstrap_stderr_continuation(line: &str) -> bool {
+    let lower = line.trim().to_ascii_lowercase();
+    lower.contains("operable program or batch file")
+}
+
+fn sanitize_transfer_stderr(stderr: &str) -> String {
+    let mut filtered = Vec::new();
+    let mut previous_was_ignorable_bootstrap = false;
+
+    for line in stderr.lines() {
+        if is_ignorable_bootstrap_stderr_line(line) {
+            previous_was_ignorable_bootstrap = true;
+            continue;
+        }
+
+        if previous_was_ignorable_bootstrap && is_ignorable_bootstrap_stderr_continuation(line) {
+            continue;
+        }
+
+        previous_was_ignorable_bootstrap = false;
+        filtered.push(line);
+    }
+
+    filtered.join("\n")
+}
+
+fn has_meaningful_stderr(stderr: &str) -> bool {
+    !sanitize_transfer_stderr(stderr).trim().is_empty()
+}
+
 fn transfer_error(operation: &str, stderr: &str) -> anyhow::Error {
-    let stderr = stderr.trim();
+    let sanitized = sanitize_transfer_stderr(stderr);
+    let stderr = sanitized.trim();
     if stderr.is_empty() {
         anyhow!("{}失败：远程命令异常退出", operation)
     } else if is_permission_denied_message(stderr) {
@@ -633,7 +682,7 @@ pub fn upload(server: &Server, local_path: &Path, destination: &str) -> Result<(
         _ => {
             let output = wait_child_output(child)?;
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stderr.trim().is_empty() {
+            if has_meaningful_stderr(&stderr) {
                 return Err(transfer_error("上传", &stderr));
             }
             return Err(anyhow!("从服务器收到了无效的压缩协商响应: {}", line.trim()));
@@ -692,7 +741,7 @@ pub fn upload(server: &Server, local_path: &Path, destination: &str) -> Result<(
     if let Err(err) = transfer_result {
         pb.abandon_with_message("上传失败");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if !stderr.trim().is_empty() {
+        if has_meaningful_stderr(&stderr) {
             return Err(transfer_error("上传", &stderr));
         }
         return Err(err).context("上传数据流写入失败");
@@ -705,7 +754,7 @@ pub fn upload(server: &Server, local_path: &Path, destination: &str) -> Result<(
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.trim().is_empty() {
+    if has_meaningful_stderr(&stderr) {
         pb.abandon_with_message("上传失败");
         return Err(transfer_error("上传", &stderr));
     }
@@ -733,7 +782,7 @@ pub fn download(server: &Server, remote_path_str: &str, local_path: &Path) -> Re
         if bytes_read == 0 {
             let output = wait_child_output(child)?;
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stderr.trim().is_empty() {
+            if has_meaningful_stderr(&stderr) {
                 return Err(transfer_error("下载", &stderr));
             }
             return Err(anyhow!("SSH 连接在传输元数据时意外关闭"));
@@ -840,7 +889,7 @@ pub fn download(server: &Server, remote_path_str: &str, local_path: &Path) -> Re
     if let Err(err) = data_result {
         pb.abandon_with_message("下载失败");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if !stderr.trim().is_empty() {
+        if has_meaningful_stderr(&stderr) {
             return Err(transfer_error("下载", &stderr));
         }
         return Err(err).context("下载数据流读取失败");
@@ -853,11 +902,37 @@ pub fn download(server: &Server, remote_path_str: &str, local_path: &Path) -> Re
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.trim().is_empty() {
+    if has_meaningful_stderr(&stderr) {
         pb.abandon_with_message("下载失败");
         return Err(transfer_error("下载", &stderr));
     }
 
     pb.finish_with_message("下载完成");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{has_meaningful_stderr, sanitize_transfer_stderr};
+
+    #[test]
+    fn ignores_powershell_not_found_noise() {
+        let stderr = "bash: line 1: powershell.exe: command not found\n/bin/sh: 1: powershell.exe: not found\n";
+        assert!(!has_meaningful_stderr(stderr));
+        assert_eq!(sanitize_transfer_stderr(stderr), "");
+    }
+
+    #[test]
+    fn keeps_real_stderr() {
+        let stderr = "bash: line 1: powershell.exe: command not found\n无权写入目标目录: /root\n";
+        assert!(has_meaningful_stderr(stderr));
+        assert_eq!(sanitize_transfer_stderr(stderr), "无权写入目标目录: /root");
+    }
+
+    #[test]
+    fn ignores_windows_cmd_powershell_not_recognized_noise() {
+        let stderr = "'powershell.exe' is not recognized as an internal or external command,\noperable program or batch file.\n";
+        assert!(!has_meaningful_stderr(stderr));
+        assert_eq!(sanitize_transfer_stderr(stderr), "");
+    }
 }
