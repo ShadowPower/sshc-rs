@@ -7,8 +7,10 @@ mod cli_api;
 mod config;
 mod config_cli;
 mod crypto;
+mod doctor;
 mod file_transfer;
 mod filezilla;
+mod run_cmd;
 mod ssh;
 mod transfer;
 mod tui;
@@ -101,6 +103,28 @@ enum Commands {
     /// 显示详细的用法教程
     #[command(alias = "t")]
     Tutorial,
+    /// 检查本地环境、配置完整性与服务器连通性
+    Doctor {
+        /// 指定服务器名称。不提供则检查全部服务器。
+        name: Option<String>,
+    },
+    /// 在一台或多台服务器上执行远程命令
+    Run {
+        /// 目标：服务器名称、@分组名、all 或 *
+        target: String,
+        /// 要执行的远程命令（支持多参数；建议在复杂命令前加 `--`）
+        #[arg(
+            value_name = "COMMAND",
+            required = true,
+            num_args = 1..,
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        command: Vec<String>,
+        /// 并行执行（默认串行）
+        #[arg(short, long)]
+        parallel: bool,
+    },
 }
 
 // --- 命令行列表 ---
@@ -250,6 +274,15 @@ async fn main() -> Result<()> {
             file_transfer::download(server, &remote_path, &local_path)?
         }
         Some(Commands::Tutorial) => tutorial::show()?,
+        Some(Commands::Doctor { name }) => doctor::run(&config_manager, name)?,
+        Some(Commands::Run {
+            target,
+            command,
+            parallel,
+        }) => {
+            let command = command.join(" ");
+            run_cmd::run(&config_manager, &target, &command, parallel)?
+        }
     }
 
     Ok(())
