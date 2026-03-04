@@ -237,8 +237,13 @@ else
     rm -f "$probe" >/dev/null 2>&1 || true
 fi
 
-echo "COMPRESSION:gzip"
-decomp="gzip -d"
+if command -v zstd >/dev/null 2>&1; then
+    echo "COMPRESSION:zstd"
+    decomp="zstd -d -q -c"
+else
+    echo "COMPRESSION:gzip"
+    decomp="gzip -d"
+fi
 
 if [ "$is_dir_upload" = "true" ]; then
     cd "$path" || {
@@ -463,14 +468,20 @@ else
     exit 0
 fi
 
-echo "COMPRESSION:gzip"
+if command -v zstd >/dev/null 2>&1; then
+    echo "COMPRESSION:zstd"
+    comp="zstd -1 -q -c"
+else
+    echo "COMPRESSION:gzip"
+    comp="gzip -1 -c"
+fi
 
 echo "---DATA---"
 
 if [ "$remote_type" = "dir" ]; then
-    tar -cf - -C "$path" . | gzip -1 -c
+    tar -cf - -C "$path" . | eval "$comp"
 else
-    cat "$path" | gzip -1 -c
+    cat "$path" | eval "$comp"
 fi
 "#;
 
@@ -913,7 +924,10 @@ pub fn download(server: &Server, remote_path_str: &str, local_path: &Path) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::{has_meaningful_stderr, sanitize_transfer_stderr};
+    use super::{
+        build_unix_download_script, build_unix_upload_script, has_meaningful_stderr,
+        sanitize_transfer_stderr,
+    };
 
     #[test]
     fn ignores_powershell_not_found_noise() {
@@ -934,5 +948,21 @@ mod tests {
         let stderr = "'powershell.exe' is not recognized as an internal or external command,\noperable program or batch file.\n";
         assert!(!has_meaningful_stderr(stderr));
         assert_eq!(sanitize_transfer_stderr(stderr), "");
+    }
+
+    #[test]
+    fn unix_upload_script_prefers_zstd_when_available() {
+        let script = build_unix_upload_script("~/dest", true);
+        assert!(script.contains("command -v zstd >/dev/null 2>&1"));
+        assert!(script.contains("echo \"COMPRESSION:zstd\""));
+        assert!(script.contains("decomp=\"zstd -d -q -c\""));
+    }
+
+    #[test]
+    fn unix_download_script_prefers_zstd_when_available() {
+        let script = build_unix_download_script("~/src");
+        assert!(script.contains("command -v zstd >/dev/null 2>&1"));
+        assert!(script.contains("echo \"COMPRESSION:zstd\""));
+        assert!(script.contains("comp=\"zstd -1 -q -c\""));
     }
 }
