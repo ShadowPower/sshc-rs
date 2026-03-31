@@ -116,6 +116,34 @@ pub fn run(manager: &ConfigManager, target: &str, command: &str, parallel: bool)
     run_with_privilege(manager, target, command, parallel, false)
 }
 
+pub fn run_interactive_with_privilege(
+    manager: &ConfigManager,
+    target: &str,
+    command: &str,
+    use_sudo: bool,
+) -> Result<()> {
+    let command = command.trim();
+    if command.is_empty() {
+        return Err(anyhow!("远程命令不能为空"));
+    }
+
+    let config = manager.read()?;
+    if config.servers.is_empty() {
+        return Err(anyhow!("未配置服务器"));
+    }
+
+    let (server_name, server) = resolve_exact_target(&config.servers, target)?;
+    println!(
+        "将在服务器 {} 上交互式执行{}命令: {}",
+        server_name,
+        if use_sudo { " sudo " } else { " " },
+        command.replace('\n', " ")
+    );
+    println!("终端将直接连接到远程 TTY，退出程序后返回本地。");
+
+    exec_one_interactive(server_name, server, command, use_sudo)
+}
+
 fn resolve_targets(
     servers: &std::collections::BTreeMap<String, Server>,
     target: &str,
@@ -159,6 +187,27 @@ fn resolve_targets(
         return Err(anyhow!("未找到目标 '{}'", target));
     }
     Ok(fuzzy)
+}
+
+fn resolve_exact_target(
+    servers: &std::collections::BTreeMap<String, Server>,
+    target: &str,
+) -> Result<(String, Server)> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Err(anyhow!("目标服务器名称不能为空"));
+    }
+
+    servers
+        .get(target)
+        .cloned()
+        .map(|server| (target.to_string(), server))
+        .ok_or_else(|| {
+            anyhow!(
+                "未找到服务器 '{}'；`sshc tty` 只支持服务器名精确匹配",
+                target
+            )
+        })
 }
 
 fn exec_one(server_name: String, server: Server, command: &str, use_sudo: bool) -> RunOutcome {
@@ -215,9 +264,40 @@ fn exec_one(server_name: String, server: Server, command: &str, use_sudo: bool) 
     }
 }
 
+fn exec_one_interactive(
+    server_name: String,
+    server: Server,
+    command: &str,
+    use_sudo: bool,
+) -> Result<()> {
+    if server.host.trim().is_empty() || server.user.trim().is_empty() {
+        return Err(anyhow!(
+            "服务器 '{}' 配置不完整（缺少 host 或 user）",
+            server_name
+        ));
+    }
+
+    let builder = if use_sudo {
+        SshProcessBuilder::new(&server, command).with_sudo()
+    } else {
+        SshProcessBuilder::new(&server, command)
+    };
+
+    let status = builder.run_interactive()?;
+    if status.success() {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "服务器 '{}' 上的交互式命令退出，exit={:?}",
+        server_name,
+        status.code()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::resolve_targets;
+    use super::{resolve_exact_target, resolve_targets};
     use crate::config::Server;
     use std::collections::BTreeMap;
 
@@ -274,5 +354,22 @@ mod tests {
         let servers = sample_servers();
         let result = resolve_targets(&servers, "生产").expect("resolve fuzzy");
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn resolve_exact_target_requires_exact_server_name() {
+        let servers = sample_servers();
+        let result = resolve_exact_target(&servers, "prod-api").expect("resolve exact target");
+        assert_eq!(result.0, "prod-api");
+    }
+
+    #[test]
+    fn resolve_exact_target_rejects_non_exact_target() {
+        let servers = sample_servers();
+        let err = resolve_exact_target(&servers, "@backend").expect_err("reject group target");
+        assert!(
+            err.to_string()
+                .contains("`sshc tty` 只支持服务器名精确匹配")
+        );
     }
 }

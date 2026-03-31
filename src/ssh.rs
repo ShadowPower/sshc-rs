@@ -259,6 +259,27 @@ impl<'a> SshProcessBuilder<'a> {
         self
     }
 
+    pub fn run_interactive(&self) -> Result<std::process::ExitStatus> {
+        let mut cmd = build_ssh_command_base(self.server)?;
+        cmd.arg("-tt");
+
+        let password = resolve_server_password(self.server);
+        let remote_command = match self.privilege {
+            RemotePrivilege::None => self.remote_command.clone(),
+            RemotePrivilege::Sudo => {
+                wrap_ssh_command_for_privilege(&self.remote_command, password.as_deref())
+            }
+        };
+        cmd.arg(remote_command);
+
+        let mut cmd = prepare_ssh_auth(cmd, password)?;
+        cmd.stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+
+        cmd.status().context("执行交互式 SSH 命令失败")
+    }
+
     /// 启动一个 SSH 子进程，用于 I/O 管道操作（上传/下载）。
     pub fn spawn_for_io(&self) -> Result<std::process::Child> {
         let mut cmd = build_ssh_command_base(self.server)?;
@@ -287,8 +308,8 @@ impl<'a> SshProcessBuilder<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_sudo_askpass_fallback_command, shell_quote, wrap_ssh_command_for_privilege,
-        SUDO_PASSWORD_ENV_NAME,
+        SUDO_PASSWORD_ENV_NAME, build_sudo_askpass_fallback_command, shell_quote,
+        wrap_ssh_command_for_privilege,
     };
 
     #[test]

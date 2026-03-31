@@ -89,6 +89,51 @@ struct RunRequest {
     use_sudo: bool,
 }
 
+#[derive(Args, Debug)]
+#[command(args_conflicts_with_subcommands = true)]
+struct TtyCommandArgs {
+    #[command(subcommand)]
+    action: Option<TtyAction>,
+    /// 目标：服务器名称（必须精确匹配）
+    target: Option<String>,
+    /// 要交互式执行的远程命令（支持多参数；建议在复杂命令前加 `--`）
+    #[arg(
+        value_name = "COMMAND",
+        num_args = 1..,
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    command: Vec<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum TtyAction {
+    /// 以 sudo 交互式执行远程命令（强制分配 TTY，适合 vim、top 等程序）
+    Sudo(TtyTargetCommand),
+}
+
+#[derive(Args, Debug)]
+struct TtyTargetCommand {
+    /// 目标：服务器名称（必须精确匹配）
+    target: String,
+    /// 要交互式执行的远程命令（支持多参数；建议在复杂命令前加 `--`）
+    #[arg(
+        value_name = "COMMAND",
+        required = true,
+        num_args = 1..,
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    command: Vec<String>,
+}
+
+#[derive(Debug)]
+struct TtyRequest {
+    target: String,
+    command: String,
+    use_sudo: bool,
+}
+
 impl RunCommandArgs {
     fn into_request(self) -> Result<RunRequest> {
         if let Some(action) = self.action {
@@ -115,6 +160,35 @@ impl RunCommandArgs {
             target,
             command: self.command.join(" "),
             parallel: self.parallel,
+            use_sudo: false,
+        })
+    }
+}
+
+impl TtyCommandArgs {
+    fn into_request(self) -> Result<TtyRequest> {
+        if let Some(action) = self.action {
+            return Ok(match action {
+                TtyAction::Sudo(args) => TtyRequest {
+                    target: args.target,
+                    command: args.command.join(" "),
+                    use_sudo: true,
+                },
+            });
+        }
+
+        let target = self
+            .target
+            .ok_or_else(|| anyhow!("缺少执行目标，请使用 `sshc tty <target> <command...>`"))?;
+        if self.command.is_empty() {
+            return Err(anyhow!(
+                "缺少远程命令，请使用 `sshc tty <target> <command...>`"
+            ));
+        }
+
+        Ok(TtyRequest {
+            target,
+            command: self.command.join(" "),
             use_sudo: false,
         })
     }
@@ -193,6 +267,8 @@ enum Commands {
     },
     /// 在一台或多台服务器上执行远程命令
     Run(RunCommandArgs),
+    /// 在单台服务器上交互式执行远程命令（支持 vim、top 等 TTY 程序）
+    Tty(TtyCommandArgs),
 }
 
 // --- 命令行列表 ---
@@ -362,6 +438,15 @@ async fn main() -> Result<()> {
                 )?
             }
         }
+        Some(Commands::Tty(args)) => {
+            let request = args.into_request()?;
+            run_cmd::run_interactive_with_privilege(
+                &config_manager,
+                &request.target,
+                &request.command,
+                request.use_sudo,
+            )?
+        }
     }
 
     Ok(())
@@ -369,7 +454,7 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, RunAction};
+    use super::{Cli, Commands, RunAction, TtyAction};
     use clap::Parser;
 
     #[test]
@@ -398,6 +483,35 @@ mod tests {
                     assert!(!sudo_args.parallel);
                 }
                 _ => panic!("unexpected run action"),
+            },
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn tty_command_keeps_legacy_style_target_and_command() {
+        let cli =
+            Cli::try_parse_from(["sshc", "tty", "prod", "vim", "/tmp/a.txt"]).expect("parse cli");
+        match cli.command {
+            Some(Commands::Tty(args)) => {
+                assert!(args.action.is_none());
+                assert_eq!(args.target.as_deref(), Some("prod"));
+                assert_eq!(args.command, vec!["vim", "/tmp/a.txt"]);
+            }
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn tty_command_supports_sudo_subcommand() {
+        let cli = Cli::try_parse_from(["sshc", "tty", "sudo", "prod", "htop"]).expect("parse cli");
+        match cli.command {
+            Some(Commands::Tty(args)) => match args.action {
+                Some(TtyAction::Sudo(sudo_args)) => {
+                    assert_eq!(sudo_args.target, "prod");
+                    assert_eq!(sudo_args.command, vec!["htop"]);
+                }
+                _ => panic!("unexpected tty action"),
             },
             _ => panic!("unexpected command"),
         }
