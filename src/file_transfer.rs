@@ -629,6 +629,28 @@ fn build_download_remote_command(remote_path: &str) -> String {
     build_dual_shell_command(&powershell_script, &unix_script)
 }
 
+fn has_trailing_path_separator(path: &str) -> bool {
+    path.ends_with('/') || path.ends_with('\\')
+}
+
+fn resolve_upload_remote_path(local_base_name: &str, destination: &str) -> String {
+    if destination.is_empty() || destination == "~" || has_trailing_path_separator(destination) {
+        let base_dir = if destination.is_empty() {
+            "~/"
+        } else {
+            destination
+        };
+        format!("{}{}", base_dir, local_base_name)
+    } else {
+        destination.to_string()
+    }
+}
+
+fn path_looks_like_directory(path: &Path) -> bool {
+    let raw = path.as_os_str().to_string_lossy();
+    has_trailing_path_separator(&raw)
+}
+
 fn create_progress_bar(total_size: u64, message: &str) -> ProgressBar {
     let pb = ProgressBar::new(total_size);
     pb.set_style(ProgressStyle::default_bar()
@@ -651,18 +673,7 @@ pub fn upload(server: &Server, local_path: &Path, destination: &str) -> Result<(
         .ok_or_else(|| anyhow!("无法获取本地文件名: {:?}", local_path))?;
 
     let is_dir_upload = local_path.is_dir();
-
-    let final_remote_path =
-        if destination.is_empty() || destination == "~" || destination.ends_with('/') {
-            let base_dir = if destination.is_empty() {
-                "~/"
-            } else {
-                destination
-            };
-            format!("{}{}", base_dir, local_base_name)
-        } else {
-            destination.to_string()
-        };
+    let final_remote_path = resolve_upload_remote_path(local_base_name, destination);
 
     let remote_command = build_upload_remote_command(&final_remote_path, is_dir_upload);
 
@@ -853,11 +864,7 @@ pub fn download(server: &Server, remote_path_str: &str, local_path: &Path) -> Re
         .unwrap_or("download");
 
     let mut final_local_path = PathBuf::from(local_path);
-    if final_local_path.is_dir()
-        || final_local_path
-            .to_string_lossy()
-            .ends_with(std::path::MAIN_SEPARATOR)
-    {
+    if final_local_path.is_dir() || path_looks_like_directory(local_path) {
         final_local_path.push(remote_base_name);
     }
 
@@ -926,8 +933,9 @@ pub fn download(server: &Server, remote_path_str: &str, local_path: &Path) -> Re
 mod tests {
     use super::{
         build_unix_download_script, build_unix_upload_script, has_meaningful_stderr,
-        sanitize_transfer_stderr,
+        path_looks_like_directory, resolve_upload_remote_path, sanitize_transfer_stderr,
     };
+    use std::path::Path;
 
     #[test]
     fn ignores_powershell_not_found_noise() {
@@ -964,5 +972,18 @@ mod tests {
         assert!(script.contains("command -v zstd >/dev/null 2>&1"));
         assert!(script.contains("echo \"COMPRESSION:zstd\""));
         assert!(script.contains("comp=\"zstd -1 -q -c\""));
+    }
+
+    #[test]
+    fn upload_destination_with_trailing_backslash_is_treated_as_directory() {
+        assert_eq!(
+            resolve_upload_remote_path("archive.zip", "C:\\Temp\\"),
+            "C:\\Temp\\archive.zip"
+        );
+    }
+
+    #[test]
+    fn download_local_path_with_forward_slash_is_treated_as_directory() {
+        assert!(path_looks_like_directory(Path::new("C:/Backups/")));
     }
 }

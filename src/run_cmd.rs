@@ -149,6 +149,10 @@ fn resolve_targets(
     target: &str,
 ) -> Result<Vec<(String, Server)>> {
     let target = target.trim();
+    if target.is_empty() {
+        return Err(anyhow!("目标不能为空"));
+    }
+
     if target == "all" || target == "*" {
         return Ok(servers
             .iter()
@@ -157,6 +161,10 @@ fn resolve_targets(
     }
 
     if let Some(group_name) = target.strip_prefix('@') {
+        if group_name.is_empty() {
+            return Err(anyhow!("分组名称不能为空"));
+        }
+
         let list: Vec<(String, Server)> = servers
             .iter()
             .filter(|(_, server)| server.group.as_deref() == Some(group_name))
@@ -371,5 +379,19 @@ mod tests {
             err.to_string()
                 .contains("`sshc tty` 只支持服务器名精确匹配")
         );
+    }
+
+    #[test]
+    fn resolve_target_rejects_empty_target() {
+        let servers = sample_servers();
+        let err = resolve_targets(&servers, "   ").expect_err("reject empty target");
+        assert!(err.to_string().contains("目标不能为空"));
+    }
+
+    #[test]
+    fn resolve_target_rejects_empty_group_name() {
+        let servers = sample_servers();
+        let err = resolve_targets(&servers, "@").expect_err("reject empty group target");
+        assert!(err.to_string().contains("分组名称不能为空"));
     }
 }
