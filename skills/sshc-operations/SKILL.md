@@ -14,12 +14,63 @@ Use this skill to execute sshc-rs tasks safely and predictably.
 - Open SFTP/FileZilla workflow: `sshc f <name>` (or plain `sshc f` for interactive picker).
 - Run non-interactive command and collect output: `sshc run <target> -- <cmd>`.
 - Run interactive/full-screen program (`vim`, `top`, `less`, REPL): `sshc tty <name> -- <cmd>`.
-- Run elevated command: `sshc run sudo <target> -- <cmd>` or `sshc tty sudo <name> -- <cmd>`.
 - Upload/download files or directories: `sshc up ...` / `sshc down ...`.
 - Manage saved hosts/groups: `sshc config ...`.
 - Script/JSON integration: `sshc api ...` only when machine-readable output is required.
 - Diagnose environment/network/config: `sshc doctor [name]`.
 - Migrate config between machines: `sshc export` / `sshc import`.
+
+## CRITICAL: Privilege Escalation with sudo
+
+Many remote operations require elevated privileges. **You MUST automatically detect when a command needs sudo and use the `sudo` subcommand — never use bare `sudo` inside the remote command string.**
+
+### When to use sudo
+
+Use `sshc run sudo` or `sshc tty sudo` when the remote command involves ANY of the following:
+
+- **Service management**: `systemctl start|stop|restart|reload|enable|disable <service>`, `service <name> start|stop|restart`
+- **Package management**: `apt install|remove|update|upgrade`, `yum install|remove`, `dnf install|remove`, `pacman -S|-R`
+- **System configuration**: editing files under `/etc/`, `/sys/`, `/proc/`, running `sysctl`, `hostnamectl`
+- **File operations on protected paths**: reading/writing `/var/log/`, `/opt/`, `/usr/local/`, `/root/`
+- **User/group management**: `useradd`, `usermod`, `groupadd`, `passwd`
+- **Network configuration**: `iptables`, `ip route`, `ip link`, `firewall-cmd`, `ufw`
+- **Disk/filesystem operations**: `mount`, `umount`, `fdisk`, `mkfs`, `fsck`
+- **System control**: `reboot`, `shutdown`, `poweroff`, `init`
+- **Docker/container operations**: `docker ...` (when Docker requires root), `systemctl restart docker`
+- **Permission changes**: `chmod`, `chown` on system-owned files
+- **Any command that would fail with "Permission denied" without root**
+
+### Syntax
+
+`sudo` is a **subcommand** of `run` and `tty`, NOT a flag or prefix:
+
+```bash
+# Correct — sudo as subcommand
+sshc run sudo prod -- systemctl restart nginx
+sshc run sudo @backend -p -- apt update
+sshc tty sudo prod -- vim /etc/nginx/nginx.conf
+
+# WRONG — never do this
+sshc run prod -- sudo systemctl restart nginx    # ← will NOT work
+sshc run prod -- systemctl restart nginx          # ← will fail with permission denied
+```
+
+### Decision rule
+
+Before constructing any `sshc run` or `sshc tty` command, ask yourself: **"Would this command fail with 'Permission denied' if executed as a non-root user?"** If yes, insert `sudo` as the subcommand:
+
+- Without sudo: `sshc run <target> -- <cmd>`
+- With sudo:    `sshc run sudo <target> -- <cmd>`
+- Without sudo: `sshc tty <name> -- <cmd>`
+- With sudo:    `sshc tty sudo <name> -- <cmd>`
+
+### Commands that do NOT need sudo
+
+- Reading public info: `uname -a`, `hostname`, `date`, `uptime`, `whoami`, `id`
+- Listing files you own: `ls`, `cat` on user-accessible files
+- Checking service status (read-only): `systemctl status <service> --no-pager`
+- Disk usage (read-only): `df -h`, `free -m`, `top`, `htop`
+- User's own processes: `ps aux`, `pgrep`
 
 ## Default Workflow
 
@@ -38,7 +89,7 @@ Use this skill to execute sshc-rs tasks safely and predictably.
   - Fuzzy match: substring against host key or display name
 - `tty` target supports only exact single host name. It rejects `@group`, `all`, `*`, and fuzzy names.
 - `run` defaults to serial; add `-p/--parallel` for parallel execution.
-- `run sudo` wraps command with privilege logic; `tty sudo` does interactive elevated execution.
+- `run sudo` and `tty sudo` are subcommands that wrap the remote command with privilege escalation (passwordless sudo first, then falls back to saved server password). See **Privilege Escalation with sudo** section above for when to use them.
 
 ## Syntax Guardrails
 

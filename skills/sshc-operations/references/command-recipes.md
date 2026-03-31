@@ -44,12 +44,39 @@ sshc run prod -- hostname
 
 ## Elevated commands (sudo)
 
-```bash
-# Single host with sudo
-sshc run sudo prod -- systemctl restart nginx
+**IMPORTANT**: `sudo` is a subcommand of `run`/`tty`, NOT a prefix inside the remote command. Always use `sshc run sudo` or `sshc tty sudo` when the remote command requires root privileges.
 
-# Group with sudo in parallel
-sshc run sudo @backend -p -- id
+```bash
+# Restart/stop/start a service (needs root)
+sshc run sudo prod -- systemctl restart nginx
+sshc run sudo prod -- systemctl stop apache2
+
+# Install/remove packages (needs root)
+sshc run sudo prod -- apt update && apt upgrade -y
+sshc run sudo @backend -p -- yum install -y htop
+
+# Edit system config files (needs root)
+sshc tty sudo prod -- vim /etc/nginx/nginx.conf
+sshc run sudo prod -- cp /etc/hosts /etc/hosts.bak
+
+# Docker operations requiring root
+sshc run sudo prod -- systemctl restart docker
+sshc run sudo prod -- docker compose up -d
+
+# Network/firewall changes (needs root)
+sshc run sudo prod -- ufw allow 8080/tcp
+sshc run sudo prod -- firewall-cmd --add-port=8080/tcp --permanent
+
+# File operations on protected paths (needs root)
+sshc run sudo prod -- chown www-data:www-data /var/www/html/index.html
+sshc run sudo prod -- chmod 644 /etc/myapp/config.toml
+
+# System control (needs root)
+sshc run sudo prod -- reboot
+sshc run sudo prod -- shutdown -h now
+
+# Group with sudo in parallel (e.g., update all backend servers)
+sshc run sudo @backend -p -- apt update
 ```
 
 ## Interactive commands (TTY)
@@ -150,18 +177,28 @@ sshc import '<exported-data>'
 ## Common operation playbooks
 
 ```bash
-# Inspect system time and uptime
+# Inspect system time and uptime (no sudo needed — read-only)
 sshc run prod -- date
 sshc run prod -- uptime
 
-# Check resource usage
+# Check resource usage (no sudo needed — read-only)
 sshc run @backend -p -- "df -h"
 sshc run @backend -p -- "free -m"
 
-# Restart service on one host, then verify
+# Restart service on one host (needs sudo), then verify (no sudo)
 sshc run sudo prod -- systemctl restart nginx
 sshc run prod -- systemctl status nginx --no-pager
 
-# Tail logs interactively
+# Install a package (needs sudo)
+sshc run sudo prod -- apt install -y curl
+
+# Edit a system config file interactively (needs sudo)
+sshc tty sudo prod -- vim /etc/ssh/sshd_config
+
+# Update all backend servers in parallel (needs sudo)
+sshc run sudo @backend -p -- apt update && apt upgrade -y
+
+# Tail logs interactively (may or may not need sudo depending on log path)
 sshc tty prod -- "tail -f /var/log/nginx/error.log"
+sshc tty sudo prod -- "tail -f /var/log/auth.log"
 ```
