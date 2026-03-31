@@ -2,21 +2,34 @@
 
 Use this reference for concrete, ready-to-run command syntax.
 
+## Table of contents
+
+- [Windows/Git Bash path conversion issue](#important-windowsgit-bash-path-conversion-issue)
+- [Discover targets and connect](#discover-targets-and-connect)
+- [Run remote commands (non-interactive)](#run-remote-commands-non-interactive)
+- [Elevated commands (sudo)](#elevated-commands-sudo)
+- [Interactive commands (TTY)](#interactive-commands-tty)
+- [File transfer](#file-transfer)
+- [Configure hosts and groups](#configure-hosts-and-groups)
+- [JSON API (automation only)](#json-api-automation-only)
+- [Web UI, diagnosis, migration](#web-ui-diagnosis-migration)
+- [Common operation playbooks](#common-operation-playbooks)
+
 ## IMPORTANT: Windows/Git Bash Path Conversion Issue
 
 **If you're running sshc from Windows using Git Bash**, you MUST wrap commands containing forward slashes (`/`) in quotes to prevent path mangling:
 
 ```bash
 # WRONG on Windows/Git Bash - paths get converted to Windows format
-sshc run nas -- cat /etc/os-release
+sshc run dev -- cat /etc/os-release
 # Error: cat: 'C:/Program Files/Git/etc/os-release': No such file
 
 # CORRECT - quote the entire command after --
-sshc run nas -- "cat /etc/os-release"
+sshc run dev -- "cat /etc/os-release"
 
 # This applies to ANY command with forward slashes:
-sshc run nas -- "ls /var/log"
-sshc run sudo nas -- "apt update && apt upgrade -y"
+sshc run prod -- "ls /var/log"
+sshc run sudo prod -- "apt update && apt upgrade -y"
 ```
 
 **Root cause**: Git Bash on Windows automatically converts Unix-style paths starting with `/` to Windows paths under `C:/Program Files/Git/`. Quoting the command prevents this conversion.
@@ -46,9 +59,9 @@ sshc f prod-server
 # Single host
 sshc run prod -- uname -a
 
-# Preferred flow: check NAS time
+# Preferred flow: check dev server time
 sshc list
-sshc run nas -- date
+sshc run dev -- date
 
 # Group target
 sshc run @backend -- systemctl status nginx

@@ -7,7 +7,7 @@ description: Operate and troubleshoot sshc-rs for SSH fleet management. Use when
 
 Use this skill to execute sshc-rs tasks safely and predictably.
 
-## Intent Routing (First Decision)
+## Task Routing (First Decision)
 
 - Discover available hosts/groups: `sshc list` (or `sshc l`).
 - Open SSH shell on one host: `sshc c <name>` (or plain `sshc` for interactive picker).
@@ -19,6 +19,25 @@ Use this skill to execute sshc-rs tasks safely and predictably.
 - Script/JSON integration: `sshc api ...` only when machine-readable output is required.
 - Diagnose environment/network/config: `sshc doctor [name]`.
 - Migrate config between machines: `sshc export` / `sshc import`.
+
+## Default Workflow
+
+1. Confirm user goal: connect, command execution, transfer, config change, diagnosis, or migration.
+2. Select the narrowest command for that goal.
+3. For target discovery, default to `sshc list` (never `api/config` by default).
+4. Execute directly once target is clear.
+5. Show the exact command before destructive operations.
+
+## Command Semantics (From Runtime Behavior)
+
+- `run` target supports:
+  - Exact host name: `prod`
+  - Group: `@backend`
+  - All hosts: `@@all`
+- `tty` target supports:
+  - Exact single host name: `prod`
+- `run` defaults to serial; add `-p/--parallel` for parallel execution.
+- `run sudo` and `tty sudo` are subcommands that wrap the remote command with privilege escalation (passwordless sudo first, then falls back to saved server password). See **Privilege Escalation with sudo** section below for when to use them.
 
 ## CRITICAL: Privilege Escalation with sudo
 
@@ -72,39 +91,20 @@ Before constructing any `sshc run` or `sshc tty` command, ask yourself: **"Would
 - Disk usage (read-only): `df -h`, `free -m`, `top`, `htop`
 - User's own processes: `ps aux`, `pgrep`
 
-## Default Workflow
-
-1. Confirm user goal: connect, command execution, transfer, config change, diagnosis, or migration.
-2. Select the narrowest command for that goal.
-3. For target discovery, default to `sshc list` (never `api/config` by default).
-4. Execute directly once target is clear.
-5. Show the exact command before destructive operations.
-
-## Command Semantics (From Runtime Behavior)
-
-- `run` target supports:
-  - Exact host name: `prod`
-  - Group: `@backend`
-  - All hosts: `@@all`
-- `tty` target supports:
-  - Exact single host name: `prod`
-- `run` defaults to serial; add `-p/--parallel` for parallel execution.
-- `run sudo` and `tty sudo` are subcommands that wrap the remote command with privilege escalation (passwordless sudo first, then falls back to saved server password). See **Privilege Escalation with sudo** section above for when to use them.
-
 ## Syntax Guardrails
 
 - Prefer explicit separator: `sshc run <target> -- <command ...>` and `sshc tty <name> -- <command ...>`.
 - **CRITICAL for Windows/Git Bash environments**: When running commands with forward slashes (`/`) in the command arguments (e.g., file paths like `/etc/os-release`), ALWAYS wrap the entire command in quotes to prevent Git Bash from incorrectly converting Unix paths to Windows paths:
   ```bash
   # WRONG on Windows/Git Bash - path gets mangled
-  sshc run nas -- cat /etc/os-release
+  sshc run dev -- cat /etc/os-release
   # Result: cat: 'C:/Program Files/Git/etc/os-release': No such file
 
   # CORRECT - quote the entire command
-  sshc run nas -- "cat /etc/os-release"
+  sshc run dev -- "cat /etc/os-release"
   ```
   This applies to ANY command containing forward slashes, including paths, flags, or other arguments.
-- For command-like user requests ("看时间", "查磁盘", "重启服务"), execute directly via `sshc run ...`, not via config inspection.
+- For command-like user requests, execute directly via `sshc run ...`, not via config inspection.
 - Transfer syntax:
   - Upload: `sshc up <local_path> <server:remote_path>`
   - Download: `sshc down <server:remote_path> <local_path>`
@@ -114,12 +114,12 @@ Before constructing any `sshc run` or `sshc tty` command, ask yourself: **"Would
 - JSON automation only:
   - `sshc api list|get|set|rm`
 
-## Discovery and Preflight Policy
+## Discovery and Preflight
 
-- When user asks to run a remote command (for example, "看看 nas 的时间"), do not preflight with `sshc config show` or `sshc api list`.
+- When user asks to run a remote command, do not preflight with `sshc config show` or `sshc api list`.
 - Use `sshc list` only if target naming is uncertain.
 - Then execute directly with `sshc run <target> -- <cmd>`.
-- Example: `sshc list` then `sshc run nas -- date`.
+- Example: `sshc list` then `sshc run prod -- date`.
 
 ## Safe Defaults
 
