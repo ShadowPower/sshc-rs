@@ -17,24 +17,42 @@ permissions:
 
 jobs:
   build-and-release:
-    name: Build on ${{ matrix.os }}
+    name: Build ${{ matrix.target }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
+            extra_target: ""
+            universal: false
             artifact_name: sshc
             asset_name: sshc-linux-amd64.tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            extra_target: ""
+            universal: false
+            artifact_name: sshc
+            asset_name: sshc-linux-arm64.tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            extra_target: ""
+            universal: false
             artifact_name: sshc.exe
             asset_name: sshc-windows-amd64.zip
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            extra_target: ""
+            universal: false
+            artifact_name: sshc.exe
+            asset_name: sshc-windows-arm64.zip
           - os: macos-latest
             target: x86_64-apple-darwin
+            extra_target: aarch64-apple-darwin
+            universal: true
             artifact_name: sshc
-            asset_name: sshc-macos-amd64.tar.gz
+            asset_name: sshc-macos-universal.tar.gz
 
     steps:
       - name: Checkout code
@@ -42,8 +60,6 @@ jobs:
 
       - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: cargo
 
       - name: Setup Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -53,18 +69,77 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y musl-tools
 
-      # 编译
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Add extra Rust target
+        if: matrix.extra_target != ''
+        run: rustup target add ${{ matrix.extra_target }}
+
+      # 编译（macOS: 生成 Universal Binary）
       - name: Build (Release)
-        run: cargo build --release --verbose
+        shell: bash
+        env:
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
+          SSHC_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+        run: |
+          if [ "${{ matrix.universal }}" = "true" ]; then
+            cargo build --release --target x86_64-apple-darwin --verbose
+            cargo build --release --target aarch64-apple-darwin --verbose
+            lipo -create \
+              target/x86_64-apple-darwin/release/${{ matrix.artifact_name }} \
+              target/aarch64-apple-darwin/release/${{ matrix.artifact_name }} \
+              -output target/release/${{ matrix.artifact_name }}
+            lipo -info target/release/${{ matrix.artifact_name }}
+          else
+            cargo build --release --target ${{ matrix.target }} --verbose
+          fi
+
+      - name: Resolve binary path
+        id: binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.universal }}" = "true" ]; then
+            echo "path=target/release/${{ matrix.artifact_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify runtime dependencies (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          file "${{ steps.binary.outputs.path }}"
+          if ! file "${{ steps.binary.outputs.path }}" | grep -Eq "statically linked|static-pie linked"; then
+            echo "Linux binary is not fully static."
+            exit 1
+          fi
+
+      - name: Verify runtime dependencies (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          otool -L "${{ steps.binary.outputs.path }}"
+          non_system_deps="$(otool -L "${{ steps.binary.outputs.path }}" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/|@rpath|@loader_path|@executable_path)' || true)"
+          if [ -n "${non_system_deps}" ]; then
+            echo "Found non-system dependencies:"
+            echo "${non_system_deps}"
+            exit 1
+          fi
+
+      - name: Smoke test binary
+        shell: bash
+        run: |
+          "${{ steps.binary.outputs.path }}" --version
 
       # 打包准备 (创建临时目录)
       - name: Prepare Packaging
         shell: bash
         run: |
           mkdir -p staging
-          cp target/release/${{ matrix.artifact_name }} staging/
+          cp "${{ steps.binary.outputs.path }}" staging/${{ matrix.artifact_name }}
           cp README.md staging/ || true
 
       # 压缩产物 (Unix)

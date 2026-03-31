@@ -28,7 +28,7 @@ struct Asset;
 #[derive(Parser, Debug)]
 #[command(
     author,
-    version,
+    version = env!("SSHC_BUILD_VERSION"),
     about = "一个强大且易用的 SSH 连接管理器。",
     long_about = "一个集成了 TUI、Web UI、人类友好和机器友好 CLI 的 SSH 连接管理器。"
 )]

@@ -25,6 +25,12 @@
 
 从 [Releases](../../releases) 页面下载对应平台的二进制文件，或自行编译：
 
+> macOS 请优先下载 `sshc-macos-universal.tar.gz`，单个二进制同时支持 Intel (`x86_64`) 与 Apple Silicon (`aarch64`)，无需 Rosetta。
+>
+> Linux 提供 `amd64`/`arm64` 两个静态链接发布包，可直接运行，无需额外安装运行时依赖。
+>
+> Windows 提供 `amd64`/`arm64` 两个发布包。
+
 ```bash
 git clone https://github.com/user/sshc-rs.git
 cd sshc-rs
