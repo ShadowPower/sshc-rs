@@ -2,6 +2,27 @@
 
 Use this reference for concrete, ready-to-run command syntax.
 
+## IMPORTANT: Windows/Git Bash Path Conversion Issue
+
+**If you're running sshc from Windows using Git Bash**, you MUST wrap commands containing forward slashes (`/`) in quotes to prevent path mangling:
+
+```bash
+# WRONG on Windows/Git Bash - paths get converted to Windows format
+sshc run nas -- cat /etc/os-release
+# Error: cat: 'C:/Program Files/Git/etc/os-release': No such file
+
+# CORRECT - quote the entire command after --
+sshc run nas -- "cat /etc/os-release"
+
+# This applies to ANY command with forward slashes:
+sshc run nas -- "ls /var/log"
+sshc run sudo nas -- "apt update && apt upgrade -y"
+```
+
+**Root cause**: Git Bash on Windows automatically converts Unix-style paths starting with `/` to Windows paths under `C:/Program Files/Git/`. Quoting the command prevents this conversion.
+
+**Rule of thumb**: On Windows/Git Bash, always quote the remote command if it contains `/` or complex arguments.
+
 ## Discover targets and connect
 
 ```bash

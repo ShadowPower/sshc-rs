@@ -94,6 +94,16 @@ Before constructing any `sshc run` or `sshc tty` command, ask yourself: **"Would
 ## Syntax Guardrails
 
 - Prefer explicit separator: `sshc run <target> -- <command ...>` and `sshc tty <name> -- <command ...>`.
+- **CRITICAL for Windows/Git Bash environments**: When running commands with forward slashes (`/`) in the command arguments (e.g., file paths like `/etc/os-release`), ALWAYS wrap the entire command in quotes to prevent Git Bash from incorrectly converting Unix paths to Windows paths:
+  ```bash
+  # WRONG on Windows/Git Bash - path gets mangled
+  sshc run nas -- cat /etc/os-release
+  # Result: cat: 'C:/Program Files/Git/etc/os-release': No such file
+
+  # CORRECT - quote the entire command
+  sshc run nas -- "cat /etc/os-release"
+  ```
+  This applies to ANY command containing forward slashes, including paths, flags, or other arguments.
 - For command-like user requests ("看时间", "查磁盘", "重启服务"), execute directly via `sshc run ...`, not via config inspection.
 - Transfer syntax:
   - Upload: `sshc up <local_path> <server:remote_path>`
