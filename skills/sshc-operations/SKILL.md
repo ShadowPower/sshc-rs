@@ -7,51 +7,75 @@ description: Operate and troubleshoot sshc-rs for SSH fleet management. Use when
 
 Use this skill to execute sshc-rs tasks safely and predictably.
 
-## Working mode
+## Intent Routing (First Decision)
 
-1. Confirm the user goal first: connect, config change, remote command, transfer, diagnosis, or migration.
-2. Select the narrowest command that solves the goal.
-3. Show the exact command before destructive operations such as config removal.
+- Discover available hosts/groups: `sshc list` (or `sshc l`).
+- Open SSH shell on one host: `sshc c <name>` (or plain `sshc` for interactive picker).
+- Open SFTP/FileZilla workflow: `sshc f <name>` (or plain `sshc f` for interactive picker).
+- Run non-interactive command and collect output: `sshc run <target> -- <cmd>`.
+- Run interactive/full-screen program (`vim`, `top`, `less`, REPL): `sshc tty <name> -- <cmd>`.
+- Run elevated command: `sshc run sudo <target> -- <cmd>` or `sshc tty sudo <name> -- <cmd>`.
+- Upload/download files or directories: `sshc up ...` / `sshc down ...`.
+- Manage saved hosts/groups: `sshc config ...`.
+- Script/JSON integration: `sshc api ...` only when machine-readable output is required.
+- Diagnose environment/network/config: `sshc doctor [name]`.
+- Migrate config between machines: `sshc export` / `sshc import`.
 
-## Command selection
+## Default Workflow
 
-Use these command families:
+1. Confirm user goal: connect, command execution, transfer, config change, diagnosis, or migration.
+2. Select the narrowest command for that goal.
+3. For target discovery, default to `sshc list` (never `api/config` by default).
+4. Execute directly once target is clear.
+5. Show the exact command before destructive operations.
 
-- `sshc` or `sshc c <name>` for direct SSH connection.
-- `sshc f` for FileZilla/SFTP workflows.
-- `sshc config add|edit|show|remove` for configuration lifecycle.
-- `sshc run <target> -- <cmd>` for non-interactive command execution.
-- `sshc run sudo <target> -- <cmd>` when elevated command execution is required.
-- `sshc tty <name> -- <cmd>` for interactive programs (`vim`, `top`, `less`, REPL).
-- `sshc up` / `sshc down` for file and directory transfer.
-- `sshc w` for local web management UI.
-- `sshc api list|get|set|rm` for script and JSON automation.
-- `sshc doctor [name]` for environment or connectivity checks.
-- `sshc export` / `sshc import` for migration.
+## Command Semantics (From Runtime Behavior)
 
-## Target rules
+- `run` target supports:
+  - Exact host name: `prod`
+  - Group: `@backend`
+  - All hosts: `all` or `*`
+  - Fuzzy match: substring against host key or display name
+- `tty` target supports only exact single host name. It rejects `@group`, `all`, `*`, and fuzzy names.
+- `run` defaults to serial; add `-p/--parallel` for parallel execution.
+- `run sudo` wraps command with privilege logic; `tty sudo` does interactive elevated execution.
 
-Follow sshc target semantics exactly:
+## Syntax Guardrails
 
-- Single host: `<server-name>`
-- Group: `@<group-name>`
-- All hosts: `all` or `*`
-- `tty` supports only an exact single host name.
+- Prefer explicit separator: `sshc run <target> -- <command ...>` and `sshc tty <name> -- <command ...>`.
+- For command-like user requests ("看时间", "查磁盘", "重启服务"), execute directly via `sshc run ...`, not via config inspection.
+- Transfer syntax:
+  - Upload: `sshc up <local_path> <server:remote_path>`
+  - Download: `sshc down <server:remote_path> <local_path>`
+- Config lifecycle:
+  - Add/Edit/Show/Remove: `sshc config add|edit|show|remove ...`
+  - Group operations: `sshc config group list|add|rename|remove ...`
+- JSON automation only:
+  - `sshc api list|get|set|rm`
 
-## Safe defaults
+## Discovery and Preflight Policy
+
+- When user asks to run a remote command (for example, "看看 nas 的时间"), do not preflight with `sshc config show` or `sshc api list`.
+- Use `sshc list` only if target naming is uncertain.
+- Then execute directly with `sshc run <target> -- <cmd>`.
+- Example: `sshc list` then `sshc run nas -- date`.
+
+## Safe Defaults
 
 - Prefer `-P` (prompted password) over `--password` to avoid shell history leakage.
-- Avoid printing secrets from config exports or raw JSON payloads.
-- Use serial execution first for risky commands; use `-p/--parallel` only when the action is idempotent and blast radius is acceptable.
-- Run `sshc doctor` before debugging complex failures.
+- Avoid exposing secrets from `api get`, import/export payloads, or config fields.
+- Use serial execution for risky operations (service restart, file mutation, package changes).
+- Use `-p/--parallel` only for idempotent and low-blast-radius tasks (read-only checks, status collection).
+- For potentially destructive remote commands, ask for confirmation and target scope first.
 
-## Troubleshooting order
+## Troubleshooting Order
 
-1. Verify binary and syntax with `sshc --help`.
-2. Run `sshc doctor` for local checks.
-3. Run `sshc doctor <name>` for host-level checks.
-4. Validate saved config with `sshc config show <name>`.
-5. Retry using the smallest reproducer command.
+1. Verify command syntax: `sshc --help` or subcommand `--help`.
+2. Validate target names with `sshc list`.
+3. Run `sshc doctor` (or `sshc doctor <name>`) for environment and reachability.
+4. Retry with the smallest reproducer command (single host, simple command).
+5. Use `sshc config show <name>` only for config debugging.
+6. Use `sshc api get <name>` only when JSON inspection is explicitly required.
 
 ## References
 
