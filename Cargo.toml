@@ -24,7 +24,7 @@ tokio = { version = "1", features = ["full"] }
 rust-embed = { version = "8.0", features = ["include-exclude"] }
 
 # Crypto & Encoding
-fernet = "0.2.1"
+fernet = { version = "0.2.2", default-features = false, features = ["rustcrypto"] }
 base64 = "0.22.1"
 zstd = "0.13"
 base85 = "2.0.0"
@@ -53,10 +53,6 @@ fs_extra = "1.3.0"
 # Platform specific
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30.1", features = ["process"] }
-
-# Windows 强制静态下载并编译 OpenSSL 源码
-[target.'cfg(windows)'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
 
 [profile.release]
 opt-level = 'z'
