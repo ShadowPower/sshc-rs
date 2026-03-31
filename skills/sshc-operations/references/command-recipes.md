@@ -33,13 +33,12 @@ sshc run nas -- date
 sshc run @backend -- systemctl status nginx
 
 # All targets (serial by default)
-sshc run all -- uptime
+sshc run @@all -- uptime
 
 # Parallel read-only check
-sshc run all -p -- "df -h"
+sshc run @@all -p -- "df -h"
 
-# Fuzzy target match is supported by run, but avoid it for risky operations
-sshc run prod -- hostname
+# Target forms: exact host name, @group, @@all
 ```
 
 ## Elevated commands (sudo)

@@ -42,7 +42,7 @@ struct Cli {
 struct RunCommandArgs {
     #[command(subcommand)]
     action: Option<RunAction>,
-    /// 目标：服务器名称、@分组名、all 或 *
+    /// 目标：服务器名称、@分组名、@@all
     target: Option<String>,
     /// 要执行的远程命令（支持多参数；建议在复杂命令前加 `--`）
     #[arg(
@@ -65,7 +65,7 @@ enum RunAction {
 
 #[derive(Args, Debug)]
 struct RunTargetCommand {
-    /// 目标：服务器名称、@分组名、all 或 *
+    /// 目标：服务器名称、@分组名、@@all
     target: String,
     /// 要执行的远程命令（支持多参数；建议在复杂命令前加 `--`）
     #[arg(

@@ -110,7 +110,7 @@ sshc run prod-server -- df -h
 sshc run @backend -- systemctl status nginx
 
 # 所有服务器
-sshc run all -- uptime
+sshc run @@all -- uptime
 
 # 并行执行
 sshc run @web -p -- "nginx -t"

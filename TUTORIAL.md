@@ -170,7 +170,7 @@
 
 - `服务器名称`: 仅执行该服务器。
 - `@分组名`: 执行该分组内全部服务器。
-- `all` 或 `*`: 执行所有服务器。
+- `@@all`: 执行所有服务器。
 
 ### 可选参数:
 
@@ -187,7 +187,7 @@
 
 `sshc run prod-server -- uname -a`
 `sshc run @backend -- systemctl status nginx`
-`sshc run all -p -- uptime`
+`sshc run @@all -p -- uptime`
 `sshc run sudo prod-server -- systemctl restart nginx`
 `sshc run sudo @backend -p -- id`
 
@@ -204,8 +204,7 @@
 
 ### 目标规则:
 
-- 目标必须是已配置的服务器名称，并且要求精确匹配。
-- 不支持 `@分组名`、`all`、`*` 或模糊匹配。
+- `服务器名称`: 仅执行该服务器，要求精确匹配。
 
 ### 说明:
 

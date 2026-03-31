@@ -1,6 +1,6 @@
 ---
 name: sshc-operations
-description: Operate and troubleshoot sshc-rs for SSH fleet management. Use when tasks involve adding or editing SSH targets, connecting to saved hosts, running commands on one host/group/all hosts, interactive TTY sessions, uploading or downloading files, checking environment issues with doctor, launching web UI, or importing/exporting sshc configuration.
+description: Operate and troubleshoot sshc-rs for SSH fleet management. Use when tasks involve adding or editing SSH targets, connecting to saved hosts, running commands on one host/group/@@all targets, interactive TTY sessions, uploading or downloading files, checking environment issues with doctor, launching web UI, or importing/exporting sshc configuration.
 ---
 
 # sshc Operations
@@ -85,9 +85,9 @@ Before constructing any `sshc run` or `sshc tty` command, ask yourself: **"Would
 - `run` target supports:
   - Exact host name: `prod`
   - Group: `@backend`
-  - All hosts: `all` or `*`
-  - Fuzzy match: substring against host key or display name
-- `tty` target supports only exact single host name. It rejects `@group`, `all`, `*`, and fuzzy names.
+  - All hosts: `@@all`
+- `tty` target supports:
+  - Exact single host name: `prod`
 - `run` defaults to serial; add `-p/--parallel` for parallel execution.
 - `run sudo` and `tty sudo` are subcommands that wrap the remote command with privilege escalation (passwordless sudo first, then falls back to saved server password). See **Privilege Escalation with sudo** section above for when to use them.
 

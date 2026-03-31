@@ -153,7 +153,7 @@ fn resolve_targets(
         return Err(anyhow!("目标不能为空"));
     }
 
-    if target == "all" || target == "*" {
+    if target == "@@all" {
         return Ok(servers
             .iter()
             .map(|(name, server)| (name.clone(), server.clone()))
@@ -180,21 +180,7 @@ fn resolve_targets(
         return Ok(vec![(target.to_string(), server.clone())]);
     }
 
-    let fuzzy: Vec<(String, Server)> = servers
-        .iter()
-        .filter(|(name, server)| {
-            name.contains(target)
-                || server
-                    .display_name
-                    .as_deref()
-                    .is_some_and(|display_name| display_name.contains(target))
-        })
-        .map(|(name, server)| (name.clone(), server.clone()))
-        .collect();
-    if fuzzy.is_empty() {
-        return Err(anyhow!("未找到目标 '{}'", target));
-    }
-    Ok(fuzzy)
+    Err(anyhow!("未找到目标 '{}'", target))
 }
 
 fn resolve_exact_target(
@@ -337,7 +323,7 @@ mod tests {
     #[test]
     fn resolve_target_all() {
         let servers = sample_servers();
-        let result = resolve_targets(&servers, "all").expect("resolve all");
+        let result = resolve_targets(&servers, "@@all").expect("resolve @@all");
         assert_eq!(result.len(), 2);
     }
 
@@ -358,10 +344,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_target_fuzzy() {
+    fn resolve_target_rejects_fuzzy() {
         let servers = sample_servers();
-        let result = resolve_targets(&servers, "生产").expect("resolve fuzzy");
-        assert_eq!(result.len(), 2);
+        let err = resolve_targets(&servers, "生产").expect_err("reject fuzzy");
+        assert!(err.to_string().contains("未找到目标 '生产'"));
     }
 
     #[test]
@@ -393,5 +379,29 @@ mod tests {
         let servers = sample_servers();
         let err = resolve_targets(&servers, "@").expect_err("reject empty group target");
         assert!(err.to_string().contains("分组名称不能为空"));
+    }
+
+    #[test]
+    fn resolve_target_exact_server_named_all() {
+        let mut servers = sample_servers();
+        servers.insert(
+            "all".to_string(),
+            Server {
+                host: "10.0.0.9".to_string(),
+                user: "root".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let result = resolve_targets(&servers, "all").expect("resolve exact server named all");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "all");
+    }
+
+    #[test]
+    fn resolve_target_rejects_wildcard_target() {
+        let servers = sample_servers();
+        let err = resolve_targets(&servers, "*").expect_err("reject wildcard target");
+        assert!(err.to_string().contains("未找到目标 '*'"));
     }
 }
