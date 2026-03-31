@@ -53,6 +53,21 @@ sshc up ./file.txt my-server:/path/to/dest/
 sshc w
 ```
 
+### Agent Skill 安装
+
+本仓库内置了可安装 Skill：`sshc-operations`（路径：`skills/sshc-operations`）。
+
+```bash
+# 查看仓库中可安装的 skills
+npx skills add ShadowPower/sshc-rs --list
+
+# 从 GitHub 安装 skill
+npx skills add ShadowPower/sshc-rs
+
+# 本地仓库调试安装
+npx skills add . --skill sshc-operations
+```
+
 ## 功能详解
 
 ### 交互式连接 (TUI)
