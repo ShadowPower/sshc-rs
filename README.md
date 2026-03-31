@@ -31,6 +31,24 @@
 >
 > Windows 提供 `amd64`/`arm64` 两个发布包。
 
+#### 一键安装
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/ShadowPower/sshc-rs/main/install.sh | bash
+
+# 使用代理
+curl -fsSL https://raw.githubusercontent.com/ShadowPower/sshc-rs/main/install.sh | bash -s -- -p
+```
+
+```powershell
+# Windows PowerShell 5 / PowerShell 7
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([ScriptBlock]::Create((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/ShadowPower/sshc-rs/main/install.ps1')))
+
+# 使用代理
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([ScriptBlock]::Create((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/ShadowPower/sshc-rs/main/install.ps1'))) -p
+```
+
 ```bash
 git clone https://github.com/user/sshc-rs.git
 cd sshc-rs

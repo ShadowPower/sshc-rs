@@ -4,6 +4,7 @@ set -euo pipefail
 REPO="ShadowPower/sshc-rs"
 BINARY="sshc"
 PROXY="https://gh-proxy.org/"
+PROXY_FIRST=false
 MARKER="# sshc-installer"
 INSTALL_DIR="${HOME}/.sshc"
 
@@ -12,6 +13,14 @@ info()    { printf "${BLUE}[INFO]${NC} %s\n" "$*"; }
 warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$*"; }
 error()   { printf "${RED}[ERROR]${NC} %s\n" "$*" >&2; }
 success() { printf "${GREEN}[OK]${NC} %s\n" "$*"; }
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [install|uninstall] [-p|--proxy]
+
+  -p, --proxy    Prefer proxy for GitHub API and downloads
+EOF
+}
 
 # ── Platform ──────────────────────────────────────────────────────
 
@@ -54,6 +63,42 @@ http_get_body() {
     elif command -v wget &>/dev/null; then wget -q --timeout=10 -O- "$url" 2>/dev/null; fi
 }
 
+prefixed_proxy_url() {
+    local url="$1"
+    printf '%s%s' "$PROXY" "$url"
+}
+
+iter_candidate_urls() {
+    local url="$1"
+    if [ "${PROXY_FIRST}" = true ]; then
+        printf '%s\n%s\n' "$(prefixed_proxy_url "$url")" "$url"
+    else
+        printf '%s\n%s\n' "$url" "$(prefixed_proxy_url "$url")"
+    fi
+}
+
+http_get_any() {
+    local url="$1" out="$2" candidate
+    while IFS= read -r candidate; do
+        if http_get "$candidate" "$out"; then
+            return 0
+        fi
+    done < <(iter_candidate_urls "$url")
+    return 1
+}
+
+http_get_body_any() {
+    local url="$1" candidate body
+    while IFS= read -r candidate; do
+        body="$(http_get_body "$candidate" || true)"
+        if [ -n "$body" ]; then
+            printf '%s' "$body"
+            return 0
+        fi
+    done < <(iter_candidate_urls "$url")
+    return 1
+}
+
 # ── PATH ──────────────────────────────────────────────────────────
 
 get_rc_file() {
@@ -91,7 +136,10 @@ remove_from_path() {
     for f in "${HOME}/.zshrc" "${HOME}/.bashrc" "${HOME}/.profile" "${HOME}/.config/fish/config.fish"; do
         if [ -f "$f" ] && grep -qF "$MARKER" "$f" 2>/dev/null; then
             info "Cleaning PATH in ${f}"
-            grep -vF "$MARKER" "$f" > "${f}.tmp.$$" && mv "${f}.tmp.$$" "$f"
+            local tmp_file
+            tmp_file="${f}.tmp.$$"
+            grep -vF "$MARKER" "$f" > "$tmp_file" || true
+            mv "$tmp_file" "$f"
         fi
     done
 }
@@ -104,7 +152,7 @@ do_install() {
 
     info "Fetching latest release..."
     local body
-    body="$(http_get_body "https://api.github.com/repos/${REPO}/releases/latest")" || true
+    body="$(http_get_body_any "https://api.github.com/repos/${REPO}/releases/latest")" || true
     [ -z "$body" ] && { error "Failed to reach GitHub API"; exit 1; }
 
     local version url
@@ -118,14 +166,15 @@ do_install() {
 
     info "Latest version: ${version}"
 
+    local tmp
     tmp="$(mktemp -d)"
-    trap 'rm -rf "$tmp"' EXIT
+    trap 'rm -rf "${tmp:-}"' EXIT
 
     local archive="${tmp}/${asset}"
     info "Downloading ${asset}..."
-    if ! http_get "$url" "$archive"; then
-        warn "Retrying via proxy..."
-        http_get "${PROXY}${url}" "$archive" || { error "Download failed"; exit 1; }
+    if ! http_get_any "$url" "$archive"; then
+        error "Download failed"
+        exit 1
     fi
 
     tar xzf "$archive" -C "$tmp"
@@ -159,8 +208,20 @@ do_uninstall() {
 
 # ── Main ──────────────────────────────────────────────────────────
 
-case "${1:-}" in
-    uninstall|remove) do_uninstall ;;
-    "")               do_install ;;
-    *)                echo "Usage: $(basename "$0") [uninstall]"; exit 1 ;;
+ACTION="install"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        install)          ACTION="install" ;;
+        uninstall|remove) ACTION="uninstall" ;;
+        -p|--proxy)       PROXY_FIRST=true ;;
+        -h|--help)        usage; exit 0 ;;
+        *)                usage; exit 1 ;;
+    esac
+    shift
+done
+
+case "$ACTION" in
+    uninstall) do_uninstall ;;
+    install)   do_install ;;
+    *)         usage; exit 1 ;;
 esac
