@@ -27,30 +27,35 @@ jobs:
             target: x86_64-unknown-linux-musl
             extra_target: ""
             universal: false
+            smoke_test: true
             artifact_name: sshc
             asset_name: sshc-linux-amd64.tar.gz
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
             extra_target: ""
             universal: false
+            smoke_test: true
             artifact_name: sshc
             asset_name: sshc-linux-arm64.tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             extra_target: ""
             universal: false
+            smoke_test: true
             artifact_name: sshc.exe
             asset_name: sshc-windows-amd64.zip
           - os: windows-latest
             target: aarch64-pc-windows-msvc
             extra_target: ""
             universal: false
+            smoke_test: false
             artifact_name: sshc.exe
             asset_name: sshc-windows-arm64.zip
           - os: macos-latest
             target: x86_64-apple-darwin
             extra_target: aarch64-apple-darwin
             universal: true
+            smoke_test: true
             artifact_name: sshc
             asset_name: sshc-macos-universal.tar.gz
 
@@ -122,7 +127,7 @@ jobs:
         shell: bash
         run: |
           otool -L "${{ steps.binary.outputs.path }}"
-          non_system_deps="$(otool -L "${{ steps.binary.outputs.path }}" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/|@rpath|@loader_path|@executable_path)' || true)"
+          non_system_deps="$(otool -L "${{ steps.binary.outputs.path }}" | awk '/^\t/{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/|@rpath|@loader_path|@executable_path)' || true)"
           if [ -n "${non_system_deps}" ]; then
             echo "Found non-system dependencies:"
             echo "${non_system_deps}"
@@ -130,6 +135,7 @@ jobs:
           fi
 
       - name: Smoke test binary
+        if: matrix.smoke_test
         shell: bash
         run: |
           "${{ steps.binary.outputs.path }}" --version
