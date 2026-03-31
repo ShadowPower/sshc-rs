@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use config::{Config, ConfigManager};
 use std::path::PathBuf;
 
@@ -35,6 +35,89 @@ struct Asset;
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+}
+
+#[derive(Args, Debug)]
+#[command(args_conflicts_with_subcommands = true)]
+struct RunCommandArgs {
+    #[command(subcommand)]
+    action: Option<RunAction>,
+    /// 目标：服务器名称、@分组名、all 或 *
+    target: Option<String>,
+    /// 要执行的远程命令（支持多参数；建议在复杂命令前加 `--`）
+    #[arg(
+        value_name = "COMMAND",
+        num_args = 1..,
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    command: Vec<String>,
+    /// 并行执行（默认串行）
+    #[arg(short, long)]
+    parallel: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum RunAction {
+    /// 以 sudo 执行远程命令（优先免密 sudo，失败时尝试使用已保存的服务器密码）
+    Sudo(RunTargetCommand),
+}
+
+#[derive(Args, Debug)]
+struct RunTargetCommand {
+    /// 目标：服务器名称、@分组名、all 或 *
+    target: String,
+    /// 要执行的远程命令（支持多参数；建议在复杂命令前加 `--`）
+    #[arg(
+        value_name = "COMMAND",
+        required = true,
+        num_args = 1..,
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    command: Vec<String>,
+    /// 并行执行（默认串行）
+    #[arg(short, long)]
+    parallel: bool,
+}
+
+#[derive(Debug)]
+struct RunRequest {
+    target: String,
+    command: String,
+    parallel: bool,
+    use_sudo: bool,
+}
+
+impl RunCommandArgs {
+    fn into_request(self) -> Result<RunRequest> {
+        if let Some(action) = self.action {
+            return Ok(match action {
+                RunAction::Sudo(args) => RunRequest {
+                    target: args.target,
+                    command: args.command.join(" "),
+                    parallel: args.parallel,
+                    use_sudo: true,
+                },
+            });
+        }
+
+        let target = self
+            .target
+            .ok_or_else(|| anyhow!("缺少执行目标，请使用 `sshc run <target> <command...>`"))?;
+        if self.command.is_empty() {
+            return Err(anyhow!(
+                "缺少远程命令，请使用 `sshc run <target> <command...>`"
+            ));
+        }
+
+        Ok(RunRequest {
+            target,
+            command: self.command.join(" "),
+            parallel: self.parallel,
+            use_sudo: false,
+        })
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -109,22 +192,7 @@ enum Commands {
         name: Option<String>,
     },
     /// 在一台或多台服务器上执行远程命令
-    Run {
-        /// 目标：服务器名称、@分组名、all 或 *
-        target: String,
-        /// 要执行的远程命令（支持多参数；建议在复杂命令前加 `--`）
-        #[arg(
-            value_name = "COMMAND",
-            required = true,
-            num_args = 1..,
-            trailing_var_arg = true,
-            allow_hyphen_values = true
-        )]
-        command: Vec<String>,
-        /// 并行执行（默认串行）
-        #[arg(short, long)]
-        parallel: bool,
-    },
+    Run(RunCommandArgs),
 }
 
 // --- 命令行列表 ---
@@ -275,15 +343,63 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Tutorial) => tutorial::show()?,
         Some(Commands::Doctor { name }) => doctor::run(&config_manager, name)?,
-        Some(Commands::Run {
-            target,
-            command,
-            parallel,
-        }) => {
-            let command = command.join(" ");
-            run_cmd::run(&config_manager, &target, &command, parallel)?
+        Some(Commands::Run(args)) => {
+            let request = args.into_request()?;
+            if request.use_sudo {
+                run_cmd::run_with_privilege(
+                    &config_manager,
+                    &request.target,
+                    &request.command,
+                    request.parallel,
+                    true,
+                )?
+            } else {
+                run_cmd::run(
+                    &config_manager,
+                    &request.target,
+                    &request.command,
+                    request.parallel,
+                )?
+            }
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands, RunAction};
+    use clap::Parser;
+
+    #[test]
+    fn run_command_keeps_legacy_syntax() {
+        let cli = Cli::try_parse_from(["sshc", "run", "prod", "uname", "-a"]).expect("parse cli");
+        match cli.command {
+            Some(Commands::Run(args)) => {
+                assert!(args.action.is_none());
+                assert_eq!(args.target.as_deref(), Some("prod"));
+                assert_eq!(args.command, vec!["uname", "-a"]);
+                assert!(!args.parallel);
+            }
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn run_command_supports_sudo_subcommand() {
+        let cli = Cli::try_parse_from(["sshc", "run", "sudo", "prod", "systemctl", "status"])
+            .expect("parse cli");
+        match cli.command {
+            Some(Commands::Run(args)) => match args.action {
+                Some(RunAction::Sudo(sudo_args)) => {
+                    assert_eq!(sudo_args.target, "prod");
+                    assert_eq!(sudo_args.command, vec!["systemctl", "status"]);
+                    assert!(!sudo_args.parallel);
+                }
+                _ => panic!("unexpected run action"),
+            },
+            _ => panic!("unexpected command"),
+        }
+    }
 }

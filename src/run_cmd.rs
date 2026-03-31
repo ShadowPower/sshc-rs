@@ -12,7 +12,13 @@ struct RunOutcome {
     spawn_error: Option<String>,
 }
 
-pub fn run(manager: &ConfigManager, target: &str, command: &str, parallel: bool) -> Result<()> {
+pub fn run_with_privilege(
+    manager: &ConfigManager,
+    target: &str,
+    command: &str,
+    parallel: bool,
+    use_sudo: bool,
+) -> Result<()> {
     let command = command.trim();
     if command.is_empty() {
         return Err(anyhow!("远程命令不能为空"));
@@ -29,8 +35,9 @@ pub fn run(manager: &ConfigManager, target: &str, command: &str, parallel: bool)
     }
 
     println!(
-        "将在 {} 台服务器上执行命令: {}",
+        "将在 {} 台服务器上执行{}命令: {}",
         targets.len(),
+        if use_sudo { " sudo " } else { " " },
         command.replace('\n', " ")
     );
     println!("执行模式: {}", if parallel { "并行" } else { "串行" });
@@ -40,7 +47,7 @@ pub fn run(manager: &ConfigManager, target: &str, command: &str, parallel: bool)
         for (server_name, server) in targets {
             let cmd = command.to_string();
             handles.push(std::thread::spawn(move || {
-                exec_one(server_name, server, &cmd)
+                exec_one(server_name, server, &cmd, use_sudo)
             }));
         }
 
@@ -62,7 +69,7 @@ pub fn run(manager: &ConfigManager, target: &str, command: &str, parallel: bool)
     } else {
         targets
             .into_iter()
-            .map(|(server_name, server)| exec_one(server_name, server, command))
+            .map(|(server_name, server)| exec_one(server_name, server, command, use_sudo))
             .collect()
     };
 
@@ -103,6 +110,10 @@ pub fn run(manager: &ConfigManager, target: &str, command: &str, parallel: bool)
         return Err(anyhow!("{} 台服务器执行失败", fail_count));
     }
     Ok(())
+}
+
+pub fn run(manager: &ConfigManager, target: &str, command: &str, parallel: bool) -> Result<()> {
+    run_with_privilege(manager, target, command, parallel, false)
 }
 
 fn resolve_targets(
@@ -150,7 +161,7 @@ fn resolve_targets(
     Ok(fuzzy)
 }
 
-fn exec_one(server_name: String, server: Server, command: &str) -> RunOutcome {
+fn exec_one(server_name: String, server: Server, command: &str, use_sudo: bool) -> RunOutcome {
     let start = Instant::now();
 
     if server.host.trim().is_empty() || server.user.trim().is_empty() {
@@ -164,7 +175,13 @@ fn exec_one(server_name: String, server: Server, command: &str) -> RunOutcome {
         };
     }
 
-    let child = match SshProcessBuilder::new(&server, command).spawn_for_io() {
+    let builder = if use_sudo {
+        SshProcessBuilder::new(&server, command).with_sudo()
+    } else {
+        SshProcessBuilder::new(&server, command)
+    };
+
+    let child = match builder.spawn_for_io() {
         Ok(c) => c,
         Err(e) => {
             return RunOutcome {

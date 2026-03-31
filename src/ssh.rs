@@ -6,6 +6,16 @@ use anyhow::{Context, Result, anyhow};
 use log::warn;
 use std::process::{Command, Stdio};
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub enum RemotePrivilege {
+    #[default]
+    None,
+    Sudo,
+}
+
+const SUDO_PASSWORD_ENV_NAME: &str = "SSHC_SUDO_PASSWORD";
+const SUDO_ASKPASS_TEMP_PATTERN: &str = "\"${TMPDIR:-/tmp}/sshc-sudo-askpass.XXXXXX\"";
+
 /// 构建一个基础的 SSH 命令，包含所有通用配置（用户、主机、端口、密钥等）。
 fn build_ssh_command_base(server: &Server) -> Result<Command> {
     if server.host.is_empty() || server.user.is_empty() {
@@ -102,6 +112,85 @@ fn prepare_ssh_auth(mut cmd: Command, password: Option<String>) -> Result<Comman
     Ok(cmd)
 }
 
+fn resolve_server_password(server: &Server) -> Option<String> {
+    server.password.clone().or_else(|| {
+        server
+            .password_encrypted
+            .as_ref()
+            .map(|enc| crypto::decrypt_password(enc))
+    })
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn build_sudo_askpass_cleanup_command() -> String {
+    format!(
+        "rm -f \"$sudo_tmp_askpass\"; unset {}",
+        SUDO_PASSWORD_ENV_NAME
+    )
+}
+
+fn build_sudo_askpass_write_command() -> String {
+    format!(
+        concat!(
+            "cat > \"$sudo_tmp_askpass\" <<'SSHC_SUDO_ASKPASS_EOF'\n",
+            "#!/bin/sh\n",
+            "printf '%s\\n' \"${}\"\n",
+            "SSHC_SUDO_ASKPASS_EOF"
+        ),
+        SUDO_PASSWORD_ENV_NAME
+    )
+}
+
+fn build_sudo_askpass_fallback_command(quoted_command: &str, quoted_password: &str) -> String {
+    let cleanup = build_sudo_askpass_cleanup_command();
+    [
+        format!("{SUDO_PASSWORD_ENV_NAME}={quoted_password}"),
+        format!("export {SUDO_PASSWORD_ENV_NAME}"),
+        format!(
+            "sudo_tmp_askpass=\"$(mktemp {})\" || exit 1",
+            SUDO_ASKPASS_TEMP_PATTERN
+        ),
+        build_sudo_askpass_write_command(),
+        format!("chmod 700 \"$sudo_tmp_askpass\" || {{ {cleanup}; exit 1; }}"),
+        format!("trap '{cleanup}' EXIT HUP INT TERM"),
+        format!("SUDO_ASKPASS=\"$sudo_tmp_askpass\" sudo -A -p '' /bin/sh -c {quoted_command}"),
+        "sudo_rc=$?".to_string(),
+        cleanup,
+        "trap - EXIT HUP INT TERM".to_string(),
+        "exit $sudo_rc".to_string(),
+    ]
+    .join("\n")
+}
+
+fn wrap_ssh_command_for_privilege(command: &str, sudo_password: Option<&str>) -> String {
+    let cleaned = command.trim();
+    if cleaned.is_empty() {
+        return cleaned.to_string();
+    }
+
+    let quoted = shell_quote(cleaned);
+    let quoted_password = shell_quote(sudo_password.unwrap_or_default());
+    let sudo_no_password_command = format!("sudo -n /bin/sh -c {}", quoted);
+    let sudo_askpass_fallback_command =
+        build_sudo_askpass_fallback_command(&quoted, &quoted_password);
+    let no_sudo_command = format!("/bin/sh -c {}", quoted);
+
+    format!(
+        concat!(
+            "if command -v sudo >/dev/null 2>&1; then ",
+            "if sudo -n true >/dev/null 2>&1; then {sudo_no_password_command}; ",
+            "else {sudo_askpass_fallback_command}; fi; ",
+            "else {no_sudo_command}; fi"
+        ),
+        sudo_no_password_command = sudo_no_password_command,
+        sudo_askpass_fallback_command = sudo_askpass_fallback_command,
+        no_sudo_command = no_sudo_command,
+    )
+}
+
 pub fn connect(server: &Server) -> Result<()> {
     let mut cmd = build_ssh_command_base(server)?;
     cmd.arg("-tt"); // 交互式 TTY
@@ -134,14 +223,7 @@ pub fn connect(server: &Server) -> Result<()> {
         };
     }
 
-    let password = server.password.clone().or_else(|| {
-        server
-            .password_encrypted
-            .as_ref()
-            .map(|enc| crypto::decrypt_password(enc))
-    });
-
-    let mut cmd = prepare_ssh_auth(cmd, password)?;
+    let mut cmd = prepare_ssh_auth(cmd, resolve_server_password(server))?;
 
     log::info!("正在建立交互式 SSH 连接...");
     #[cfg(not(windows))]
@@ -160,6 +242,7 @@ pub fn connect(server: &Server) -> Result<()> {
 pub struct SshProcessBuilder<'a> {
     server: &'a Server,
     remote_command: String,
+    privilege: RemotePrivilege,
 }
 
 impl<'a> SshProcessBuilder<'a> {
@@ -167,20 +250,26 @@ impl<'a> SshProcessBuilder<'a> {
         Self {
             server,
             remote_command: remote_command.to_string(),
+            privilege: RemotePrivilege::None,
         }
+    }
+
+    pub fn with_sudo(mut self) -> Self {
+        self.privilege = RemotePrivilege::Sudo;
+        self
     }
 
     /// 启动一个 SSH 子进程，用于 I/O 管道操作（上传/下载）。
     pub fn spawn_for_io(&self) -> Result<std::process::Child> {
         let mut cmd = build_ssh_command_base(self.server)?;
-        cmd.arg(&self.remote_command);
-
-        let password = self.server.password.clone().or_else(|| {
-            self.server
-                .password_encrypted
-                .as_ref()
-                .map(|enc| crypto::decrypt_password(enc))
-        });
+        let password = resolve_server_password(self.server);
+        let remote_command = match self.privilege {
+            RemotePrivilege::None => self.remote_command.clone(),
+            RemotePrivilege::Sudo => {
+                wrap_ssh_command_for_privilege(&self.remote_command, password.as_deref())
+            }
+        };
+        cmd.arg(remote_command);
 
         let mut cmd = prepare_ssh_auth(cmd, password)?;
 
@@ -192,5 +281,37 @@ impl<'a> SshProcessBuilder<'a> {
             .context("启动 SSH 子进程失败")?;
 
         Ok(child)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_sudo_askpass_fallback_command, shell_quote, wrap_ssh_command_for_privilege,
+        SUDO_PASSWORD_ENV_NAME,
+    };
+
+    #[test]
+    fn shell_quote_escapes_single_quotes() {
+        assert_eq!(shell_quote("echo 'hi'"), "'echo '\"'\"'hi'\"'\"''");
+    }
+
+    #[test]
+    fn sudo_wrapper_prefers_non_interactive_sudo_and_falls_back_to_askpass() {
+        let wrapped = wrap_ssh_command_for_privilege("systemctl restart nginx", Some("s3cr'et"));
+        assert!(wrapped.contains("sudo -n true"));
+        assert!(wrapped.contains("sudo -n /bin/sh -c 'systemctl restart nginx'"));
+        assert!(wrapped.contains("SUDO_ASKPASS"));
+        assert!(wrapped.contains("sudo_tmp_askpass=\"$(mktemp "));
+        assert!(wrapped.contains(&format!("{SUDO_PASSWORD_ENV_NAME}='s3cr'\"'\"'et'")));
+        assert!(wrapped.contains("trap 'rm -f \"$sudo_tmp_askpass\"; unset SSHC_SUDO_PASSWORD'"));
+        assert!(wrapped.contains("/bin/sh -c 'systemctl restart nginx'"));
+    }
+
+    #[test]
+    fn sudo_wrapper_uses_empty_password_consistently() {
+        let wrapped = build_sudo_askpass_fallback_command("'id -u'", "''");
+        assert!(wrapped.contains("SSHC_SUDO_PASSWORD=''"));
+        assert!(wrapped.contains("sudo_rc=$?"));
     }
 }

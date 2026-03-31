@@ -137,8 +137,59 @@
   说明: 本地路径不以分隔符结尾，它指定了文件的最终名称。
 
 - 下载整个目录
-  `sshc down my-server:/etc/nginx ./nginx_config_backup`
+`sshc down my-server:/etc/nginx ./nginx_config_backup`
   说明: 远程目录 `/etc/nginx` 将被完整下载到本地的新目录 `./nginx_config_backup` 中。
+
+--------------------------------------------------------------------------------
+
+## 命令: `doctor`
+
+检查本地环境、配置完整性与服务器连通性。
+
+### 用法:
+
+`sshc doctor [服务器名称]`
+
+### 示例:
+
+`sshc doctor`
+`sshc doctor prod-server`
+
+--------------------------------------------------------------------------------
+
+## 命令: `run`
+
+在一台或多台服务器上执行远程命令，支持单机、分组和全部服务器。
+
+### 用法:
+
+`sshc run <目标> <命令...>`
+`sshc run sudo <目标> <命令...>`
+
+### 目标规则:
+
+- `服务器名称`: 仅执行该服务器。
+- `@分组名`: 执行该分组内全部服务器。
+- `all` 或 `*`: 执行所有服务器。
+
+### 可选参数:
+
+- `-p, --parallel`: 并行执行（默认串行）。
+
+### `sudo` 子命令说明:
+
+- `sshc run sudo ...` 会为远程命令自动添加提权包装。
+- 如果远程主机支持免密 sudo，则优先使用 `sudo -n` 直接执行。
+- 如果远程主机需要 sudo 密码，则会使用当前服务器已保存的登录密码通过 `SUDO_ASKPASS` 非交互执行，不占用业务标准输入。
+- 如果远程主机未安装 `sudo`，则回退为普通 `/bin/sh` 执行。
+
+### 示例:
+
+`sshc run prod-server -- uname -a`
+`sshc run @backend -- systemctl status nginx`
+`sshc run all -p -- uptime`
+`sshc run sudo prod-server -- systemctl restart nginx`
+`sshc run sudo @backend -p -- id`
 
 --------------------------------------------------------------------------------
 
@@ -217,8 +268,8 @@
 为脚本和第三方工具集成设计的机器友好接口，所有输入输出均为 JSON 格式。
 
 `api list`: 输出所有服务器名称的 JSON 数组。
-`api get [名称]`: 输出指定服务器配置的 JSON 对象。若省略名称，则会输出所有服务器的配置集合。
-`api set [-d <JSON>]`: 从标准输入 (stdin) 或 `-d/--data` 参数读取 JSON 来创建或更新服务器。
+`api get [名称]`: 输出指定服务器配置的 JSON 对象（不包含密码字段）。若省略名称，则会输出所有服务器的配置集合。
+`api set [-d <JSON>]`: 从标准输入 (stdin) 或 `-d/--data` 参数读取 JSON 来创建或更新服务器；若 JSON 未传 `password` 字段，则保留原密码不变。
 `api rm <名称>`: 删除服务器，无确认提示。
 
 #### 示例:
