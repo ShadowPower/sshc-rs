@@ -1,4 +1,4 @@
-use crate::{ConfigManager, config::Server};
+use crate::{ConfigManager, config::Server, filezilla_detector};
 use anyhow::{Result, anyhow};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
@@ -53,7 +53,7 @@ pub fn run(manager: &ConfigManager, name: Option<String>) -> Result<()> {
     let mut summary = Summary::default();
     println!("=== 本地环境检查 ===");
     check_local_binary("ssh", true, &mut summary);
-    check_local_binary("filezilla", false, &mut summary);
+    check_filezilla(&mut summary);
     println!();
 
     println!("=== 配置与连通性检查 ===");
@@ -82,6 +82,13 @@ fn check_local_binary(binary: &str, required: bool, summary: &mut Summary) {
             "本地命令 '{}' 不存在（仅影响相关可选功能）",
             binary
         )),
+    }
+}
+
+fn check_filezilla(summary: &mut Summary) {
+    match filezilla_detector::detect() {
+        Some(path) => summary.ok(&format!("FileZilla 可用: {}", path.display())),
+        None => summary.warn("未检测到 FileZilla（仅影响相关可选功能）"),
     }
 }
 

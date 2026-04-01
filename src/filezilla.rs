@@ -1,36 +1,14 @@
-use crate::{config::Server, crypto};
+use crate::{config::Server, crypto, filezilla_detector};
 use anyhow::{Context, Result, anyhow};
 use log::warn;
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use url::Url;
-
-fn find_path() -> Result<PathBuf> {
-    if let Ok(path) = which::which("filezilla") {
-        return Ok(path);
-    }
-    let paths = if cfg!(target_os = "windows") {
-        vec![
-            "C:\\Program Files\\FileZilla FTP Client\\filezilla.exe",
-            "C:\\Program Files (x86)\\FileZilla FTP Client\\filezilla.exe",
-        ]
-    } else if cfg!(target_os = "macos") {
-        vec!["/Applications/FileZilla.app/Contents/MacOS/filezilla"]
-    } else {
-        vec![]
-    };
-    paths
-        .iter()
-        .map(PathBuf::from)
-        .find(|p| p.exists())
-        .ok_or_else(|| anyhow!("未能找到 FileZilla"))
-}
 
 pub fn connect(server: &Server) -> Result<()> {
     if server.host.is_empty() || server.user.is_empty() {
         return Err(anyhow!("连接失败：服务器配置不完整 (缺少主机或用户名)。"));
     }
-    let path = find_path()?;
+    let path = filezilla_detector::require_path()?;
     let password = server.password.clone().or_else(|| {
         server
             .password_encrypted

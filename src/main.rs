@@ -10,6 +10,7 @@ mod crypto;
 mod doctor;
 mod file_transfer;
 mod filezilla;
+mod filezilla_detector;
 mod run_cmd;
 mod ssh;
 mod transfer;
