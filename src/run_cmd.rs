@@ -1,5 +1,9 @@
-use crate::{ConfigManager, config::Server, ssh::SshProcessBuilder};
-use anyhow::{Result, anyhow};
+use crate::{
+    ConfigManager,
+    config::Server,
+    ssh::{SshProcessBuilder, build_ssh_error},
+};
+use anyhow::{Context, Result, anyhow};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -9,7 +13,7 @@ struct RunOutcome {
     stdout: String,
     stderr: String,
     exit_code: Option<i32>,
-    spawn_error: Option<String>,
+    error_message: Option<String>,
 }
 
 pub fn run_with_privilege(
@@ -61,7 +65,7 @@ pub fn run_with_privilege(
                     stdout: String::new(),
                     stderr: String::new(),
                     exit_code: None,
-                    spawn_error: Some("执行线程异常退出".to_string()),
+                    error_message: Some("执行线程异常退出".to_string()),
                 }),
             }
         }
@@ -79,14 +83,21 @@ pub fn run_with_privilege(
         let elapsed_ms = outcome.duration.as_millis();
         println!();
         println!("===== {} =====", outcome.server_name);
-        match (&outcome.spawn_error, outcome.exit_code) {
-            (Some(err), _) => {
-                println!("[ERR] 启动失败 ({} ms): {}", elapsed_ms, err);
-                fail_count += 1;
-            }
+        match (&outcome.error_message, outcome.exit_code) {
             (None, Some(0)) => {
                 println!("[OK]  执行成功 ({} ms)", elapsed_ms);
                 ok_count += 1;
+            }
+            (Some(err), None) => {
+                println!("[ERR] 启动失败 ({} ms): {}", elapsed_ms, err);
+                fail_count += 1;
+            }
+            (Some(err), code) => {
+                println!(
+                    "[ERR] 执行失败 ({} ms), exit={:?}: {}",
+                    elapsed_ms, code, err
+                );
+                fail_count += 1;
             }
             (None, code) => {
                 println!("[ERR] 执行失败 ({} ms), exit={:?}", elapsed_ms, code);
@@ -214,7 +225,7 @@ fn exec_one(server_name: String, server: Server, command: &str, use_sudo: bool) 
             stdout: String::new(),
             stderr: String::new(),
             exit_code: None,
-            spawn_error: Some("配置不完整（缺少 host 或 user）".to_string()),
+            error_message: Some("配置不完整（缺少 host 或 user）".to_string()),
         };
     }
 
@@ -233,27 +244,37 @@ fn exec_one(server_name: String, server: Server, command: &str, use_sudo: bool) 
                 stdout: String::new(),
                 stderr: String::new(),
                 exit_code: None,
-                spawn_error: Some(e.to_string()),
+                error_message: Some(e.to_string()),
             };
         }
     };
 
     match child.wait_with_output() {
-        Ok(output) => RunOutcome {
-            server_name,
-            duration: start.elapsed(),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            exit_code: output.status.code(),
-            spawn_error: None,
-        },
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let error_message = if output.status.success() || stderr.trim().is_empty() {
+                None
+            } else {
+                Some(build_ssh_error("执行远程命令", &stderr).to_string())
+            };
+
+            RunOutcome {
+                server_name,
+                duration: start.elapsed(),
+                stdout,
+                stderr,
+                exit_code: output.status.code(),
+                error_message,
+            }
+        }
         Err(e) => RunOutcome {
             server_name,
             duration: start.elapsed(),
             stdout: String::new(),
             stderr: String::new(),
             exit_code: None,
-            spawn_error: Some(e.to_string()),
+            error_message: Some(e.to_string()),
         },
     }
 }
@@ -277,16 +298,9 @@ fn exec_one_interactive(
         SshProcessBuilder::new(&server, command)
     };
 
-    let status = builder.run_interactive()?;
-    if status.success() {
-        return Ok(());
-    }
-
-    Err(anyhow!(
-        "服务器 '{}' 上的交互式命令退出，exit={:?}",
-        server_name,
-        status.code()
-    ))
+    builder
+        .run_interactive()
+        .with_context(|| format!("服务器 '{}' 的交互式命令执行失败", server_name))
 }
 
 #[cfg(test)]

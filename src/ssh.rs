@@ -4,7 +4,11 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use log::warn;
-use std::process::{Command, Stdio};
+use std::{
+    io::{BufRead, BufReader},
+    process::{Command, Stdio},
+    thread,
+};
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub enum RemotePrivilege {
@@ -15,6 +19,58 @@ pub enum RemotePrivilege {
 
 const SUDO_PASSWORD_ENV_NAME: &str = "SSHC_SUDO_PASSWORD";
 const SUDO_ASKPASS_TEMP_PATTERN: &str = "\"${TMPDIR:-/tmp}/sshc-sudo-askpass.XXXXXX\"";
+
+fn normalized_ssh_stderr(stderr: &str) -> String {
+    stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn explain_ssh_stderr(stderr: &str) -> Option<String> {
+    let normalized = normalized_ssh_stderr(stderr);
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let lower = normalized.to_ascii_lowercase();
+    let message = if lower.contains("permission denied (") {
+        "认证失败，请检查用户名、密码或私钥是否正确"
+    } else if lower.contains("too many authentication failures") {
+        "认证失败，尝试的认证方式过多"
+    } else if lower.contains("host key verification failed")
+        || lower.contains("remote host identification has changed")
+    {
+        "主机指纹校验失败，请确认远程主机身份是否变更"
+    } else if lower.contains("could not resolve hostname") {
+        "主机名解析失败，请检查服务器地址是否正确"
+    } else if lower.contains("connection refused") {
+        "连接被拒绝，请检查 SSH 服务是否启动以及端口是否正确"
+    } else if lower.contains("connection timed out") {
+        "连接超时，请检查网络连通性、防火墙或端口是否可达"
+    } else if lower.contains("no route to host") {
+        "网络不可达，请检查网络路由或目标主机是否在线"
+    } else if lower.contains("connection closed by ") {
+        "连接被远程主机中断，请检查 SSH 服务状态或安全策略限制"
+    } else if lower.contains("broken pipe") {
+        "连接已断开，请检查网络稳定性或远程主机状态"
+    } else {
+        return Some(normalized);
+    };
+
+    Some(format!("{message}（{normalized}）"))
+}
+
+pub fn build_ssh_error(operation: &str, stderr: &str) -> anyhow::Error {
+    let normalized = normalized_ssh_stderr(stderr);
+    if let Some(detail) = explain_ssh_stderr(&normalized) {
+        anyhow!("{operation}失败：{detail}")
+    } else {
+        anyhow!("{operation}失败：SSH 未返回更多错误信息")
+    }
+}
 
 /// 构建一个基础的 SSH 命令，包含所有通用配置（用户、主机、端口、密钥等）。
 fn build_ssh_command_base(server: &Server) -> Result<Command> {
@@ -226,16 +282,43 @@ pub fn connect(server: &Server) -> Result<()> {
     let mut cmd = prepare_ssh_auth(cmd, resolve_server_password(server))?;
 
     log::info!("正在建立交互式 SSH 连接...");
-    #[cfg(not(windows))]
-    {
-        use std::os::unix::process::CommandExt;
-        Err(anyhow!("执行 ssh 失败: {}", cmd.exec()))
+    cmd.stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().context("启动 SSH 连接失败")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("无法获取 SSH 错误输出"))?;
+
+    let stderr_handle = thread::spawn(move || -> std::io::Result<String> {
+        let mut collected = String::new();
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let bytes = reader.read_line(&mut line)?;
+            if bytes == 0 {
+                break;
+            }
+            eprint!("{line}");
+            collected.push_str(&line);
+        }
+        Ok(collected)
+    });
+
+    let status = child.wait().context("等待 SSH 连接结束时失败")?;
+    let stderr = stderr_handle
+        .join()
+        .map_err(|_| anyhow!("读取 SSH 错误输出时线程异常退出"))?
+        .context("读取 SSH 错误输出失败")?;
+
+    if status.success() {
+        return Ok(());
     }
-    #[cfg(windows)]
-    {
-        cmd.status().context("执行 ssh 失败")?;
-        Ok(())
-    }
+
+    Err(build_ssh_error("SSH 连接", &stderr))
 }
 
 /// 一个用于文件传输的 SSH 进程构建器。
@@ -259,7 +342,7 @@ impl<'a> SshProcessBuilder<'a> {
         self
     }
 
-    pub fn run_interactive(&self) -> Result<std::process::ExitStatus> {
+    pub fn run_interactive(&self) -> Result<()> {
         let mut cmd = build_ssh_command_base(self.server)?;
         cmd.arg("-tt");
 
@@ -275,15 +358,53 @@ impl<'a> SshProcessBuilder<'a> {
         let mut cmd = prepare_ssh_auth(cmd, password)?;
         cmd.stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
+            .stderr(Stdio::piped());
 
-        cmd.status().context("执行交互式 SSH 命令失败")
+        let mut child = cmd.spawn().context("执行交互式 SSH 命令失败")?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("无法获取 SSH 错误输出"))?;
+
+        let stderr_handle = thread::spawn(move || -> std::io::Result<String> {
+            let mut collected = String::new();
+            let mut reader = BufReader::new(stderr);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let bytes = reader.read_line(&mut line)?;
+                if bytes == 0 {
+                    break;
+                }
+                eprint!("{line}");
+                collected.push_str(&line);
+            }
+            Ok(collected)
+        });
+
+        let status = child.wait().context("等待交互式 SSH 命令结束时失败")?;
+        let stderr = stderr_handle
+            .join()
+            .map_err(|_| anyhow!("读取 SSH 错误输出时线程异常退出"))?
+            .context("读取 SSH 错误输出失败")?;
+
+        if status.success() {
+            return Ok(());
+        }
+
+        Err(build_ssh_error("执行交互式 SSH 命令", &stderr))
     }
 
     /// 启动一个 SSH 子进程，用于 I/O 管道操作（上传/下载）。
     pub fn spawn_for_io(&self) -> Result<std::process::Child> {
         let mut cmd = build_ssh_command_base(self.server)?;
         let password = resolve_server_password(self.server);
+        if password.is_none() {
+            // Non-interactive SSH should not fall back to password prompts on stdin when no
+            // saved password is available, but it should still preserve OpenSSH's canonical
+            // auth failure message.
+            cmd.args(["-o", "NumberOfPasswordPrompts=0"]);
+        }
         let remote_command = match self.privilege {
             RemotePrivilege::None => self.remote_command.clone(),
             RemotePrivilege::Sudo => {
@@ -308,7 +429,7 @@ impl<'a> SshProcessBuilder<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        SUDO_PASSWORD_ENV_NAME, build_sudo_askpass_fallback_command, shell_quote,
+        SUDO_PASSWORD_ENV_NAME, build_ssh_error, build_sudo_askpass_fallback_command, shell_quote,
         wrap_ssh_command_for_privilege,
     };
 
@@ -334,5 +455,45 @@ mod tests {
         let wrapped = build_sudo_askpass_fallback_command("'id -u'", "''");
         assert!(wrapped.contains("SSHC_SUDO_PASSWORD=''"));
         assert!(wrapped.contains("sudo_rc=$?"));
+    }
+
+    #[test]
+    fn ssh_error_reports_auth_failure_clearly() {
+        let err = build_ssh_error(
+            "SSH 连接",
+            "Permission denied, please try again.\nPermission denied (publickey,password).\n",
+        );
+        assert!(err.to_string().contains("认证失败"));
+        assert!(
+            err.to_string()
+                .contains("Permission denied (publickey,password)")
+        );
+    }
+
+    #[test]
+    fn ssh_error_reports_dns_failure_clearly() {
+        let err = build_ssh_error(
+            "执行远程命令",
+            "ssh: Could not resolve hostname bad-host: Name or service not known\n",
+        );
+        assert!(err.to_string().contains("主机名解析失败"));
+    }
+
+    #[test]
+    fn ssh_error_handles_repeated_password_prompts() {
+        let err = build_ssh_error(
+            "SSH 连接",
+            "Permission denied, please try again.\nPermission denied, please try again.\nPermission denied (publickey,password).\n",
+        );
+        assert!(err.to_string().contains("认证失败"));
+    }
+
+    #[test]
+    fn ssh_error_uses_canonical_dns_message() {
+        let err = build_ssh_error(
+            "SSH 连接",
+            "ssh: Could not resolve hostname example.internal: Name or service not known\n",
+        );
+        assert!(err.to_string().contains("主机名解析失败"));
     }
 }

@@ -1,5 +1,6 @@
 use crate::config::Server;
 use crate::ssh::SshProcessBuilder;
+use crate::ssh::explain_ssh_stderr;
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
@@ -178,6 +179,8 @@ fn transfer_error(operation: &str, stderr: &str) -> anyhow::Error {
     let stderr = sanitized.trim();
     if stderr.is_empty() {
         anyhow!("{}失败：远程命令异常退出", operation)
+    } else if let Some(detail) = explain_ssh_stderr(stderr) {
+        anyhow!("{}失败：{}", operation, detail)
     } else if is_permission_denied_message(stderr) {
         anyhow!("{}失败：无权访问目标路径（{}）", operation, stderr)
     } else {
@@ -934,6 +937,7 @@ mod tests {
     use super::{
         build_unix_download_script, build_unix_upload_script, has_meaningful_stderr,
         path_looks_like_directory, resolve_upload_remote_path, sanitize_transfer_stderr,
+        transfer_error,
     };
     use std::path::Path;
 
@@ -949,6 +953,15 @@ mod tests {
         let stderr = "bash: line 1: powershell.exe: command not found\n无权写入目标目录: /root\n";
         assert!(has_meaningful_stderr(stderr));
         assert_eq!(sanitize_transfer_stderr(stderr), "无权写入目标目录: /root");
+    }
+
+    #[test]
+    fn transfer_error_reports_ssh_auth_failure_clearly() {
+        let err = transfer_error(
+            "上传",
+            "Permission denied, please try again.\nPermission denied (publickey,password).\n",
+        );
+        assert!(err.to_string().contains("认证失败"));
     }
 
     #[test]
