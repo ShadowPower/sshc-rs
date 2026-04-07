@@ -33,19 +33,27 @@
 
 #### 一键安装
 
-```bash
-# Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/ShadowPower/sshc-rs/main/install.sh | bash
+Linux / macOS：
 
-# 使用代理
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShadowPower/sshc-rs/main/install.sh | bash
+```
+
+Linux / macOS（使用代理）：
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/ShadowPower/sshc-rs/main/install.sh | bash -s -- -p
 ```
 
-```powershell
-# Windows PowerShell 5 / PowerShell 7
-Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([ScriptBlock]::Create((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/ShadowPower/sshc-rs/main/install.ps1')))
+Windows PowerShell 5 / PowerShell 7：
 
-# 使用代理
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([ScriptBlock]::Create((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/ShadowPower/sshc-rs/main/install.ps1')))
+```
+
+Windows PowerShell 5 / PowerShell 7（使用代理）：
+
+```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([ScriptBlock]::Create((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/ShadowPower/sshc-rs/main/install.ps1'))) -p
 ```
 
@@ -81,15 +89,10 @@ sshc w
 
 本仓库内置了可安装 Skill：`sshc-operations`（路径：`skills/sshc-operations`）。
 
+从 GitHub 安装 Skill：
+
 ```bash
-# 查看仓库中可安装的 skills
-npx skills add ShadowPower/sshc-rs --list
-
-# 从 GitHub 安装 skill
 npx skills add ShadowPower/sshc-rs
-
-# 本地仓库调试安装
-npx skills add . --skill sshc-operations
 ```
 
 ## 功能详解
