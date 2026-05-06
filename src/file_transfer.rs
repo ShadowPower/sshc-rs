@@ -126,6 +126,12 @@ fn is_permission_denied_message(message: &str) -> bool {
         || message.contains("权限不足")
 }
 
+fn is_ignorable_ssh_stderr_line(line: &str) -> bool {
+    let lower = line.trim().to_ascii_lowercase();
+    lower.starts_with("warning: permanently added ")
+        && lower.contains(" to the list of known hosts")
+}
+
 fn is_ignorable_bootstrap_stderr_line(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -154,6 +160,11 @@ fn sanitize_transfer_stderr(stderr: &str) -> String {
     let mut previous_was_ignorable_bootstrap = false;
 
     for line in stderr.lines() {
+        if is_ignorable_ssh_stderr_line(line) {
+            previous_was_ignorable_bootstrap = false;
+            continue;
+        }
+
         if is_ignorable_bootstrap_stderr_line(line) {
             previous_was_ignorable_bootstrap = true;
             continue;
@@ -944,6 +955,14 @@ mod tests {
     #[test]
     fn ignores_powershell_not_found_noise() {
         let stderr = "bash: line 1: powershell.exe: command not found\n/bin/sh: 1: powershell.exe: not found\n";
+        assert!(!has_meaningful_stderr(stderr));
+        assert_eq!(sanitize_transfer_stderr(stderr), "");
+    }
+
+    #[test]
+    fn ignores_known_hosts_accept_new_warning() {
+        let stderr =
+            "Warning: Permanently added '192.168.41.40' (ED25519) to the list of known hosts.\n";
         assert!(!has_meaningful_stderr(stderr));
         assert_eq!(sanitize_transfer_stderr(stderr), "");
     }
